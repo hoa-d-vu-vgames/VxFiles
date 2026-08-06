@@ -20,7 +20,7 @@ internal sealed record AutomationFingerprint(
 /// </summary>
 internal static class AutomationTrustFingerprint
 {
-	public static AutomationFingerprint Compute(
+	public static async ValueTask<AutomationFingerprint> ComputeAsync(
 		AutomationPackageDefinition package,
 		AutomationModuleOptions options,
 		ImmutableArray<AutomationExternalToolIdentity> tools)
@@ -29,10 +29,11 @@ internal static class AutomationTrustFingerprint
 		// and every action, so a change to it must renew trust exactly as a change to python.exe does. Actions
 		// launch with -B so importing the runner cannot drop a __pycache__ in here and move this fingerprint on
 		// its own; that flag is load-bearing for trust, not a tidiness measure.
-		var runnerFingerprint = FingerprintTree(options.Runtime.Root, canonicalizeManifest: false);
+		var runnerFingerprint = await FingerprintTreeAsync(options.Runtime.Root, canonicalizeManifest: false);
+		var packageFingerprint = await FingerprintTreeAsync(package.PackagePath, canonicalizeManifest: true);
 		using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
 		AppendRecord(hash, "manifest", CanonicalizeJson(package.ManifestBytes));
-		AppendRecord(hash, "package", Encoding.UTF8.GetBytes(FingerprintTree(package.PackagePath, canonicalizeManifest: true)));
+		AppendRecord(hash, "package", Encoding.UTF8.GetBytes(packageFingerprint));
 		AppendRecord(hash, "runner", Encoding.UTF8.GetBytes(runnerFingerprint));
 		foreach (var tool in tools.OrderBy(tool => tool.Id, StringComparer.Ordinal))
 			AppendRecord(hash, $"tool/{tool.Id}", Encoding.UTF8.GetBytes(tool.Fingerprint));
@@ -45,7 +46,7 @@ internal static class AutomationTrustFingerprint
 	/// <summary>
 	/// Hashes relative paths and contents so that relocating an unchanged package preserves its trust.
 	/// </summary>
-	private static string FingerprintTree(string rootPath, bool canonicalizeManifest)
+	private static async ValueTask<string> FingerprintTreeAsync(string rootPath, bool canonicalizeManifest)
 	{
 		var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootPath));
 		using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
@@ -57,15 +58,15 @@ internal static class AutomationTrustFingerprint
 			if ((attributes & FileAttributes.Directory) != 0)
 				continue;
 
+			// The manifest is the one file read whole, because canonicalizing it is what keeps reformatting from
+			// renewing trust, and that needs the bytes. It is bounded; the rest of the tree is not.
 			var relativePath = Path.GetRelativePath(root, path).Replace('\\', '/');
-			var content = File.ReadAllBytes(path);
-			if (canonicalizeManifest &&
-				string.Equals(relativePath, AutomationManifestReader.ManifestFileName, StringComparison.Ordinal))
-			{
-				content = CanonicalizeJson(content);
-			}
+			var digest = canonicalizeManifest &&
+				string.Equals(relativePath, AutomationManifestReader.ManifestFileName, StringComparison.Ordinal)
+					? SHA256.HashData(CanonicalizeJson(File.ReadAllBytes(path)))
+					: await AutomationFileHash.ComputeAsync(path);
 
-			AppendRecord(hash, relativePath, SHA256.HashData(content));
+			AppendRecord(hash, relativePath, digest);
 		}
 
 		return Convert.ToHexStringLower(hash.GetHashAndReset());

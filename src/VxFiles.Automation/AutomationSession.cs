@@ -188,8 +188,8 @@ internal sealed class AutomationSession : IAutomationSession
 		ValidateSelection(action, invocation.Selection);
 		var packageState = await _stateStore.ReadPackageStateAsync(package.Id, cancellationToken);
 		var actionSettings = await _stateStore.ReadActionSettingsAsync(invocation.ActionId, cancellationToken);
-		var dependencies = AutomationDependencyResolver.Resolve(package, action, packageState, actionSettings);
-		var fingerprint = AutomationTrustFingerprint.Compute(package, _options, dependencies.ExternalTools);
+		var dependencies = await AutomationDependencyResolver.ResolveAsync(package, action, packageState, actionSettings);
+		var fingerprint = await AutomationTrustFingerprint.ComputeAsync(package, _options, dependencies.ExternalTools);
 
 		if (!string.Equals(packageState.TrustedFingerprint, fingerprint.PackageFingerprint, StringComparison.Ordinal))
 		{
@@ -212,7 +212,7 @@ internal sealed class AutomationSession : IAutomationSession
 			await _stateStore.WritePackageTrustAsync(package.Id, fingerprint.PackageFingerprint, cancellationToken);
 		}
 
-		var launchFingerprint = AutomationTrustFingerprint.Compute(package, _options, dependencies.ExternalTools);
+		var launchFingerprint = await AutomationTrustFingerprint.ComputeAsync(package, _options, dependencies.ExternalTools);
 		if (!string.Equals(fingerprint.PackageFingerprint, launchFingerprint.PackageFingerprint, StringComparison.Ordinal))
 			throw new InvalidOperationException("Automation Package content changed after trust approval; review and trust it again.");
 

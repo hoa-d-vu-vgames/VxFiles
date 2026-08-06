@@ -23,7 +23,7 @@ internal sealed class AutomationMissingDependencyException(string message) : Inv
 /// </summary>
 internal static class AutomationDependencyResolver
 {
-	public static ResolvedAutomationDependencies Resolve(
+	public static async ValueTask<ResolvedAutomationDependencies> ResolveAsync(
 		AutomationPackageDefinition package,
 		AutomationActionDefinition action,
 		AutomationPackageState packageState,
@@ -41,13 +41,13 @@ internal static class AutomationDependencyResolver
 		foreach (var toolId in action.ExternalToolIds)
 		{
 			var definition = package.ExternalTools.First(tool => string.Equals(tool.Id, toolId, StringComparison.Ordinal));
-			tools.Add(ResolveExternalTool(definition, packageState));
+			tools.Add(await ResolveExternalToolAsync(definition, packageState));
 		}
 
 		return new(settings.ToImmutable(), tools.ToImmutable());
 	}
 
-	private static AutomationExternalToolIdentity ResolveExternalTool(
+	private static async ValueTask<AutomationExternalToolIdentity> ResolveExternalToolAsync(
 		AutomationExternalToolDefinition definition,
 		AutomationPackageState packageState)
 	{
@@ -91,7 +91,7 @@ internal static class AutomationDependencyResolver
 		return new(
 			definition.Id,
 			path,
-			$"sha256:{Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path)))}",
+			$"sha256:{await AutomationFileHash.ComputeHexAsync(path)}",
 			version);
 	}
 

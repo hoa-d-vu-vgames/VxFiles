@@ -16,13 +16,13 @@ namespace VxFiles.Automation.Tests;
 public sealed class AutomationDependencyResolverTests
 {
 	[TestMethod]
-	public void Resolve_accepts_a_tool_reached_through_a_link_and_reports_its_target()
+	public async Task Resolve_accepts_a_tool_reached_through_a_link_and_reports_its_target()
 	{
 		using var tools = new ToolFolder();
 		var target = tools.AddExecutable("ffmpeg.exe");
 		var shim = tools.AddLink("shim.exe", target);
 
-		var resolved = Resolve(Configure(shim));
+		var resolved = await ResolveAsync(Configure(shim));
 
 		// The path handed to the action is the target, not the shim: this is how a winget or scoop install
 		// stays configured across an upgrade that re-points its shim.
@@ -30,96 +30,106 @@ public sealed class AutomationDependencyResolverTests
 	}
 
 	[TestMethod]
-	public void Resolve_hashes_the_link_target_and_not_the_link()
+	public async Task Resolve_hashes_the_link_target_and_not_the_link()
 	{
 		using var tools = new ToolFolder();
 		var target = tools.AddExecutable("ffmpeg.exe");
 		var shim = tools.AddLink("shim.exe", target);
 
-		Assert.AreEqual(Resolve(Configure(target)).Fingerprint, Resolve(Configure(shim)).Fingerprint);
+		var throughTarget = await ResolveAsync(Configure(target));
+		var throughShim = await ResolveAsync(Configure(shim));
+
+		Assert.AreEqual(throughTarget.Fingerprint, throughShim.Fingerprint);
 	}
 
 	[TestMethod]
-	public void Resolve_rejects_a_link_whose_target_is_gone()
+	public async Task Resolve_rejects_a_link_whose_target_is_gone()
 	{
 		using var tools = new ToolFolder();
 		var target = tools.AddExecutable("ffmpeg.exe");
 		var shim = tools.AddLink("shim.exe", target);
 		File.Delete(target);
 
-		var exception = Assert.ThrowsExactly<AutomationMissingDependencyException>(() => Resolve(Configure(shim)));
+		var exception = await Assert.ThrowsExactlyAsync<AutomationMissingDependencyException>(
+			() => ResolveAsync(Configure(shim)));
+
 		StringAssert.Contains(exception.Message, "FFmpeg");
 	}
 
 	[TestMethod]
-	public void Resolve_rejects_a_link_to_something_that_is_not_a_program()
+	public async Task Resolve_rejects_a_link_to_something_that_is_not_a_program()
 	{
 		using var tools = new ToolFolder();
 		var payload = tools.AddExecutable("payload.dll");
 		var shim = tools.AddLink("ffmpeg.exe", payload);
 
-		var exception = Assert.ThrowsExactly<AutomationMissingDependencyException>(() => Resolve(Configure(shim)));
+		var exception = await Assert.ThrowsExactlyAsync<AutomationMissingDependencyException>(
+			() => ResolveAsync(Configure(shim)));
+
 		StringAssert.Contains(exception.Message, "payload.dll");
 	}
 
 	[TestMethod]
-	public void Resolve_rejects_a_directory()
+	public async Task Resolve_rejects_a_directory()
 	{
 		using var tools = new ToolFolder();
 		var folder = Path.Join(tools.Path, "ffmpeg.exe");
 		Directory.CreateDirectory(folder);
 
-		Assert.ThrowsExactly<AutomationMissingDependencyException>(() => Resolve(Configure(folder)));
+		await Assert.ThrowsExactlyAsync<AutomationMissingDependencyException>(() => ResolveAsync(Configure(folder)));
 	}
 
 	[TestMethod]
-	public void Resolve_rejects_a_relative_path()
+	public async Task Resolve_rejects_a_relative_path()
 	{
 		using var tools = new ToolFolder();
 		tools.AddExecutable("ffmpeg.exe");
 
-		Assert.ThrowsExactly<AutomationMissingDependencyException>(() => Resolve(Configure("ffmpeg.exe")));
+		await Assert.ThrowsExactlyAsync<AutomationMissingDependencyException>(
+			() => ResolveAsync(Configure("ffmpeg.exe")));
 	}
 
 	[TestMethod]
-	public void Resolve_rejects_a_tool_that_reports_no_file_version_when_one_is_required()
+	public async Task Resolve_rejects_a_tool_that_reports_no_file_version_when_one_is_required()
 	{
 		using var tools = new ToolFolder();
 		var path = tools.AddExecutable("ffmpeg.exe");
 
 		// FFmpeg's own Windows builds are exactly this case: no version resource at all.
-		var exception = Assert.ThrowsExactly<AutomationMissingDependencyException>(
-			() => Resolve(Configure(path), minimumFileVersion: "7.1"));
+		var exception = await Assert.ThrowsExactlyAsync<AutomationMissingDependencyException>(
+			() => ResolveAsync(Configure(path), minimumFileVersion: "7.1"));
 
 		StringAssert.Contains(exception.Message, "FFmpeg");
 		StringAssert.Contains(exception.Message, "7.1");
 	}
 
 	[TestMethod]
-	public void Resolve_rejects_a_declared_minimum_that_is_not_a_version()
+	public async Task Resolve_rejects_a_declared_minimum_that_is_not_a_version()
 	{
 		using var tools = new ToolFolder();
 		var path = tools.AddExecutable("ffmpeg.exe");
 
 		// The manifest reader accepts any string here, so the resolver is where an unusable floor is caught.
 		// It must surface as guidance, not as the FormatException an unguarded Version.Parse would throw.
-		var exception = Assert.ThrowsExactly<AutomationMissingDependencyException>(
-			() => Resolve(Configure(path), minimumFileVersion: "n7.1-full_build"));
+		var exception = await Assert.ThrowsExactlyAsync<AutomationMissingDependencyException>(
+			() => ResolveAsync(Configure(path), minimumFileVersion: "n7.1-full_build"));
 
 		StringAssert.Contains(exception.Message, "FFmpeg");
 		StringAssert.Contains(exception.Message, "n7.1-full_build");
 	}
 
 	[TestMethod]
-	public void Resolve_accepts_a_tool_with_no_file_version_when_none_is_required()
+	public async Task Resolve_accepts_a_tool_with_no_file_version_when_none_is_required()
 	{
 		using var tools = new ToolFolder();
 		var path = tools.AddExecutable("ffmpeg.exe");
 
-		Assert.AreEqual(path, Resolve(Configure(path)).ExecutablePath);
+		var resolved = await ResolveAsync(Configure(path));
+
+		Assert.AreEqual(path, resolved.ExecutablePath);
 	}
 
-	private static AutomationExternalToolIdentity Resolve(
+	private static async Task<AutomationExternalToolIdentity> ResolveAsync(
 		AutomationPackageState packageState,
 		string? minimumFileVersion = null)
 	{
@@ -143,10 +153,13 @@ public sealed class AutomationDependencyResolverTests
 			[toolDefinition],
 			ImmutableDictionary<AutomationActionLocalId, AutomationActionDefinition>.Empty.Add(action.Id.LocalId, action));
 
-		return AutomationDependencyResolver
-			.Resolve(package, action, packageState, new(ImmutableDictionary<string, AutomationSettingValue>.Empty))
-			.ExternalTools
-			.Single();
+		var dependencies = await AutomationDependencyResolver.ResolveAsync(
+			package,
+			action,
+			packageState,
+			new(ImmutableDictionary<string, AutomationSettingValue>.Empty));
+
+		return dependencies.ExternalTools.Single();
 	}
 
 	private static AutomationPackageState Configure(string executablePath)
