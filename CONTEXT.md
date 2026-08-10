@@ -36,6 +36,9 @@ The third Info Pane tab, after Details and Preview. It lists discovered Automati
 **Selection Policy**
 What an Automation Action declares it accepts: how many items, of which kinds, with which extensions. One evaluator in `VxFiles.Automation.Abstractions` answers it for both the Tools tab's Run button and the session's own admission check, so a button is never enabled for a run the session would refuse.
 
+**Action Setting**
+A typed value an Automation Action declares in its manifest and a user configures per action, transported to the run alongside the selection. What it *is* and how it is *held* are separate: an enum, a file path and a folder path are all held as text, so a surface choosing between a dropdown, a picker and a text box needs the declared type rather than the stored kind. An action that has never been configured has the manifest's default, and a stored value that no longer satisfies its declaration refuses the run rather than being quietly replaced.
+
 **Package Trust**
 Consent granted to a whole Automation Package, recorded against a fingerprint of its content, its runner, and the external tools it resolves. It is requested before the package's first run and again whenever that fingerprint moves, and it covers every action the package contains rather than the one that triggered the prompt.
 

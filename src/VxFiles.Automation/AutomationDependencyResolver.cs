@@ -33,7 +33,7 @@ internal static class AutomationDependencyResolver
 		var settings = ImmutableDictionary.CreateBuilder<string, AutomationSettingValue>(StringComparer.Ordinal);
 		foreach (var definition in action.Settings)
 		{
-			var value = actionSettings.Values.GetValueOrDefault(definition.Key, definition.DefaultValue);
+			var value = AutomationSettingRules.Current(actionSettings.Values, definition.Key, definition.DefaultValue);
 			ValidateSetting(definition, value);
 			settings.Add(definition.Key, value);
 		}
@@ -84,17 +84,18 @@ internal static class AutomationDependencyResolver
 	{
 		var valid = definition.Type switch
 		{
-			"boolean" => value.Kind is AutomationSettingValueKind.Boolean,
-			"integer" => value.Kind is AutomationSettingValueKind.Integer &&
+			AutomationSettingType.Boolean => value.Kind is AutomationSettingValueKind.Boolean,
+			AutomationSettingType.Integer => value.Kind is AutomationSettingValueKind.Integer &&
 				(definition.Minimum is null || value.IntegerValue >= definition.Minimum) &&
 				(definition.Maximum is null || value.IntegerValue <= definition.Maximum),
-			"number" => value.Kind is AutomationSettingValueKind.Number && double.IsFinite(value.NumberValue) &&
+			AutomationSettingType.Number => value.Kind is AutomationSettingValueKind.Number && double.IsFinite(value.NumberValue) &&
 				(definition.Minimum is null || value.NumberValue >= definition.Minimum) &&
 				(definition.Maximum is null || value.NumberValue <= definition.Maximum),
-			"string" or "filePath" or "folderPath" => value.Kind is AutomationSettingValueKind.String && value.StringValue is not null &&
+			AutomationSettingType.String or AutomationSettingType.FilePath or AutomationSettingType.FolderPath =>
+				value.Kind is AutomationSettingValueKind.String && value.StringValue is not null &&
 				(definition.MinimumLength is null || value.StringValue.Length >= definition.MinimumLength) &&
 				(definition.MaximumLength is null || value.StringValue.Length <= definition.MaximumLength),
-			"enum" => value.Kind is AutomationSettingValueKind.String && value.StringValue is not null &&
+			AutomationSettingType.Enum => value.Kind is AutomationSettingValueKind.String && value.StringValue is not null &&
 				definition.Values.Contains(value.StringValue, StringComparer.Ordinal),
 			_ => false,
 		};

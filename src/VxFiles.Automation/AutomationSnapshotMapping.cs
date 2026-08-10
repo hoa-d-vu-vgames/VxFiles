@@ -73,12 +73,14 @@ internal static class AutomationSnapshotMapping
 			string.IsNullOrEmpty(metadata.Description) ? diagnostic : metadata.Description,
 			metadata.Icon,
 			AutomationAvailability.Disabled,
-			[diagnostic]);
+			[diagnostic],
+			[]);
 
 	public static AutomationActionSnapshot AvailableAction(
 		AutomationPackageId packageId,
 		AutomationActionMetadata metadata,
-		AutomationSelectionPolicy selection)
+		AutomationSelectionPolicy selection,
+		ImmutableArray<AutomationSettingDefinition> settings)
 		=> new(
 			new(packageId, metadata.LocalId),
 			metadata.DisplayName,
@@ -86,7 +88,77 @@ internal static class AutomationSnapshotMapping
 			metadata.Icon,
 			AutomationAvailability.Available,
 			[],
+			[.. settings.Select(Schema)],
 			selection);
+
+	/// <summary>
+	/// Applies each action's stored settings over the defaults discovery left in place, completing the snapshot.
+	/// </summary>
+	/// <remarks>
+	/// Discovery reads manifests and never touches user state, so the two halves of a settings projection meet
+	/// here. A caller has to apply this every time it takes a freshly discovered catalog — a catalog refresh
+	/// rebuilds from manifests, which know nothing about what a user configured.
+	///
+	/// <para>
+	/// Only actions that declare settings are read for, so a catalog of packages like the bundled tracer — which
+	/// declares none — costs no state I/O at all.
+	/// </para>
+	/// </remarks>
+	public static async Task<ImmutableArray<AutomationPackageSnapshot>> WithStoredSettingsAsync(
+		IAutomationStateStore stateStore,
+		ImmutableArray<AutomationPackageSnapshot> packages,
+		CancellationToken cancellationToken)
+	{
+		var updatedPackages = packages.ToBuilder();
+		for (var packageIndex = 0; packageIndex < updatedPackages.Count; packageIndex++)
+		{
+			var package = updatedPackages[packageIndex];
+			if (package.Actions.All(action => action.Settings.IsEmpty))
+				continue;
+
+			var updatedActions = package.Actions.ToBuilder();
+			for (var actionIndex = 0; actionIndex < updatedActions.Count; actionIndex++)
+			{
+				var action = updatedActions[actionIndex];
+				if (action.Settings.IsEmpty)
+					continue;
+
+				var stored = (await stateStore.ReadActionSettingsAsync(action.Id, cancellationToken)).Values;
+				if (stored.IsEmpty)
+					continue;
+
+				updatedActions[actionIndex] = action with
+				{
+					Settings = [.. action.Settings.Select(setting => setting with
+					{
+						CurrentValue = AutomationSettingRules.Current(stored, setting.Key, setting.DefaultValue),
+					})],
+				};
+			}
+
+			updatedPackages[packageIndex] = package with { Actions = updatedActions.ToImmutable() };
+		}
+
+		return updatedPackages.ToImmutable();
+	}
+
+	/// <summary>
+	/// Projects a declared setting with no stored value applied: discovery reads manifests, not user state, so
+	/// <c>CurrentValue</c> starts as the default until <see cref="WithStoredSettingsAsync"/> completes it.
+	/// </summary>
+	private static AutomationSettingSchema Schema(AutomationSettingDefinition definition)
+		=> new(
+			definition.Key,
+			definition.DisplayName,
+			definition.Description,
+			definition.Type,
+			definition.DefaultValue,
+			definition.DefaultValue,
+			definition.Minimum,
+			definition.Maximum,
+			definition.MinimumLength,
+			definition.MaximumLength,
+			definition.Values);
 
 	/// <summary>
 	/// Gives an action with an unusable id a content-stable identity, so diagnostics survive manifest reordering.

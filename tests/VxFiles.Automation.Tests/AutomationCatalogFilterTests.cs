@@ -123,5 +123,6 @@ public sealed class AutomationCatalogFilterTests
 			description,
 			null,
 			AutomationAvailability.Available,
+			[],
 			[]);
 }

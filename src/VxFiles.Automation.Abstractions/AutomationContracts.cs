@@ -112,11 +112,60 @@ public sealed record AutomationSelectionPolicy(
 	ImmutableArray<string> Extensions);
 
 /// <summary>
+/// What kind of value a setting declares, and therefore which control edits it.
+/// </summary>
+/// <remarks>
+/// Distinct from <see cref="AutomationSettingValueKind"/>, which has four members because <c>Enum</c>,
+/// <c>FilePath</c> and <c>FolderPath</c> all <em>store</em> as a string. What a setting is and how it is held
+/// are different facts; a host surface needs this one to choose between a text box, a picker and a dropdown.
+/// </remarks>
+public enum AutomationSettingType
+{
+	Boolean,
+	Integer,
+	Number,
+	String,
+	Enum,
+	FilePath,
+	FolderPath,
+}
+
+/// <summary>
+/// One declared setting of an Automation Action, with everything needed to render and bind an editor for it.
+/// </summary>
+/// <remarks>
+/// <paramref name="CurrentValue"/> is the stored value when the action has one and <paramref name="DefaultValue"/>
+/// otherwise — the same fallback a run resolves settings by, so what a host shows is what a run would resolve.
+/// Carrying it here is what lets an editor open without an asynchronous read, which is what makes Cancel free
+/// rather than a rollback. A stored value that no longer satisfies the declaration below is still reported as
+/// current: the run refuses it, and showing it is what gives the user something to correct.
+///
+/// <para>
+/// The bounds are per type and mostly absent: <paramref name="Minimum"/> and <paramref name="Maximum"/> apply to
+/// <c>Integer</c> and <c>Number</c>, the lengths to the string-backed types, and <paramref name="Values"/> is
+/// non-empty only for <c>Enum</c>.
+/// </para>
+/// </remarks>
+public sealed record AutomationSettingSchema(
+	string Key,
+	string DisplayName,
+	string Description,
+	AutomationSettingType Type,
+	AutomationSettingValue DefaultValue,
+	AutomationSettingValue CurrentValue,
+	double? Minimum,
+	double? Maximum,
+	int? MinimumLength,
+	int? MaximumLength,
+	ImmutableArray<string> Values);
+
+/// <summary>
 /// One Automation Action as a host surface sees it.
 /// </summary>
 /// <remarks>
 /// <paramref name="Selection"/> is <see langword="null"/> for an action that failed validation: its manifest
-/// never produced a policy, and it cannot be run regardless.
+/// never produced a policy, and it cannot be run regardless. Such an action carries no <paramref name="Settings"/>
+/// either, for the same reason — nothing was validated to declare them.
 /// </remarks>
 public sealed record AutomationActionSnapshot(
 	AutomationActionId Id,
@@ -125,6 +174,7 @@ public sealed record AutomationActionSnapshot(
 	string? Icon,
 	AutomationAvailability Availability,
 	ImmutableArray<string> Diagnostics,
+	ImmutableArray<AutomationSettingSchema> Settings,
 	AutomationSelectionPolicy? Selection = null);
 
 public sealed record AutomationPackageSnapshot(

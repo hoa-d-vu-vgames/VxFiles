@@ -31,9 +31,10 @@ internal sealed class AutomationSession : IAutomationSession
 	private AutomationSnapshot _snapshot;
 	private bool _disposed;
 
-	public AutomationSession(
+	private AutomationSession(
 		AutomationModuleOptions options,
 		AutomationCatalog catalog,
+		ImmutableArray<AutomationPackageSnapshot> packages,
 		IAutomationStateStore stateStore,
 		IAutomationTrustConsent trustConsent,
 		IAutomationResultRouter resultRouter)
@@ -43,11 +44,31 @@ internal sealed class AutomationSession : IAutomationSession
 		_stateStore = stateStore;
 		_trustConsent = trustConsent;
 		_resultRouter = resultRouter;
-		_snapshot = new(1, 1, catalog.Snapshot.Packages, [], []);
+		_snapshot = new(1, 1, packages, [], []);
 		_catalogWatchers = options.PackageRoots
 			.Where(Directory.Exists)
 			.Select(CreateCatalogWatcher)
 			.ToImmutableArray();
+	}
+
+	/// <summary>
+	/// Opens a session over a discovered catalog, with each action's stored settings already applied.
+	/// </summary>
+	/// <remarks>
+	/// The state read happens before construction rather than after it, because constructing the session starts
+	/// the catalog watchers: a refresh racing an overlay applied afterwards could replace the seeded snapshot with
+	/// one holding defaults.
+	/// </remarks>
+	public static async ValueTask<AutomationSession> CreateAsync(
+		AutomationModuleOptions options,
+		AutomationCatalog catalog,
+		IAutomationStateStore stateStore,
+		IAutomationTrustConsent trustConsent,
+		IAutomationResultRouter resultRouter,
+		CancellationToken cancellationToken = default)
+	{
+		var packages = await AutomationSnapshotMapping.WithStoredSettingsAsync(stateStore, catalog.Snapshot.Packages, cancellationToken);
+		return new(options, catalog, packages, stateStore, trustConsent, resultRouter);
 	}
 
 	public event PropertyChangedEventHandler? PropertyChanged;
@@ -441,6 +462,7 @@ internal sealed class AutomationSession : IAutomationSession
 		{
 			await Task.Delay(CatalogRefreshDebounce, cancellationToken);
 			var replacement = AutomationManifestCatalog.Discover(_options.CatalogOptions);
+			var packages = await AutomationSnapshotMapping.WithStoredSettingsAsync(_stateStore, replacement.Snapshot.Packages, cancellationToken);
 			lock (_gate)
 			{
 				if (_disposed || cancellationToken.IsCancellationRequested)
@@ -449,7 +471,7 @@ internal sealed class AutomationSession : IAutomationSession
 				ReplaceSnapshot(_snapshot with
 				{
 					CatalogRevision = _snapshot.CatalogRevision + 1,
-					Packages = replacement.Snapshot.Packages,
+					Packages = packages,
 				});
 			}
 		}

@@ -25,7 +25,9 @@ internal sealed record AutomationExternalToolDefinition(
 
 internal sealed record AutomationSettingDefinition(
 	string Key,
-	string Type,
+	string DisplayName,
+	string Description,
+	AutomationSettingType Type,
 	AutomationSettingValue DefaultValue,
 	double? Minimum,
 	double? Maximum,

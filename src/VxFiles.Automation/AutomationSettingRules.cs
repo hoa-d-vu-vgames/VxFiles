@@ -29,6 +29,22 @@ internal static partial class AutomationSettingRules
 		"values",
 	];
 
+	/// <summary>
+	/// The value an action currently has for a declared setting: what is stored for it, or the manifest's default
+	/// when nothing is.
+	/// </summary>
+	/// <remarks>
+	/// Named rather than repeated, because a run and a host surface have to answer this the same way: what is
+	/// displayed as current is what a run would resolve. A stored value that no longer satisfies its declaration
+	/// is returned unchanged — <see cref="AutomationDependencyResolver"/> refuses the run over it, which is the
+	/// only thing that tells the user there is something to correct.
+	/// </remarks>
+	public static AutomationSettingValue Current(
+		ImmutableDictionary<string, AutomationSettingValue> stored,
+		string key,
+		AutomationSettingValue defaultValue)
+		=> stored.GetValueOrDefault(key, defaultValue);
+
 	public static ImmutableArray<AutomationSettingDefinition> Validate(JsonElement action)
 	{
 		if (!action.TryGetProperty("settings", out var settings))
@@ -45,9 +61,9 @@ internal static partial class AutomationSettingRules
 			var key = AutomationManifestReader.RequireString(setting, "key", Scope);
 			if (!SettingKeyRegex().IsMatch(key) || !keys.Add(key))
 				throw AutomationValidationException.Action($"Setting key '{key}' is invalid or duplicated.");
-			_ = AutomationManifestReader.RequireBoundedString(setting, "displayName", 1, 80, Scope);
-			_ = AutomationManifestReader.RequireBoundedString(setting, "description", 1, 500, Scope);
-			var type = AutomationManifestReader.RequireString(setting, "type", Scope);
+			var displayName = AutomationManifestReader.RequireBoundedString(setting, "displayName", 1, 80, Scope);
+			var description = AutomationManifestReader.RequireBoundedString(setting, "description", 1, 500, Scope);
+			var type = ReadType(key, AutomationManifestReader.RequireString(setting, "type", Scope));
 			var defaultElement = AutomationManifestReader.RequireProperty(setting, "default", Scope);
 			var defaultValue = ReadDefaultValue(key, type, defaultElement);
 
@@ -55,11 +71,13 @@ internal static partial class AutomationSettingRules
 			var maximum = AutomationManifestReader.ReadOptionalNumber(setting, "maximum", Scope);
 			var minimumLength = AutomationManifestReader.ReadOptionalInteger(setting, "minimumLength", Scope);
 			var maximumLength = AutomationManifestReader.ReadOptionalInteger(setting, "maximumLength", Scope);
-			var permittedValues = type is "enum"
+			var permittedValues = type is AutomationSettingType.Enum
 				? ValidateEnumValues(setting, key, defaultValue.StringValue!)
 				: ImmutableArray<string>.Empty;
 			definitions.Add(new(
 				key,
+				displayName,
+				description,
 				type,
 				defaultValue,
 				minimum,
@@ -72,17 +90,38 @@ internal static partial class AutomationSettingRules
 		return definitions.ToImmutable();
 	}
 
-	private static AutomationSettingValue ReadDefaultValue(string key, string type, JsonElement defaultElement)
+	/// <summary>
+	/// The one place the manifest's spelling of a type is understood. Everything downstream carries
+	/// <see cref="AutomationSettingType"/>, so no other code has to know that a type is written as text at all.
+	/// </summary>
+	private static AutomationSettingType ReadType(string key, string type)
+		=> type switch
+		{
+			"boolean" => AutomationSettingType.Boolean,
+			"integer" => AutomationSettingType.Integer,
+			"number" => AutomationSettingType.Number,
+			"string" => AutomationSettingType.String,
+			"enum" => AutomationSettingType.Enum,
+			"filePath" => AutomationSettingType.FilePath,
+			"folderPath" => AutomationSettingType.FolderPath,
+			_ => throw AutomationValidationException.Action($"Setting '{key}' has an invalid type or default value."),
+		};
+
+	private static AutomationSettingValue ReadDefaultValue(
+		string key,
+		AutomationSettingType type,
+		JsonElement defaultElement)
 	{
 		var value = type switch
 		{
-			"boolean" when defaultElement.ValueKind is JsonValueKind.True or JsonValueKind.False =>
+			AutomationSettingType.Boolean when defaultElement.ValueKind is JsonValueKind.True or JsonValueKind.False =>
 				new AutomationSettingValue(AutomationSettingValueKind.Boolean, BooleanValue: defaultElement.GetBoolean()),
-			"integer" when defaultElement.TryGetInt64(out var integer) =>
+			AutomationSettingType.Integer when defaultElement.TryGetInt64(out var integer) =>
 				new AutomationSettingValue(AutomationSettingValueKind.Integer, IntegerValue: integer),
-			"number" when defaultElement.TryGetDouble(out var number) && double.IsFinite(number) =>
+			AutomationSettingType.Number when defaultElement.TryGetDouble(out var number) && double.IsFinite(number) =>
 				new AutomationSettingValue(AutomationSettingValueKind.Number, NumberValue: number),
-			"string" or "filePath" or "folderPath" or "enum" when defaultElement.ValueKind is JsonValueKind.String =>
+			AutomationSettingType.String or AutomationSettingType.Enum or AutomationSettingType.FilePath or
+				AutomationSettingType.FolderPath when defaultElement.ValueKind is JsonValueKind.String =>
 				new AutomationSettingValue(AutomationSettingValueKind.String, StringValue: defaultElement.GetString()),
 			_ => null,
 		};

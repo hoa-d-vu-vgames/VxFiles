@@ -73,7 +73,7 @@ public sealed class AutomationSessionTests
 		var stale = fixture.Invocation(session, "hoa.media/convert");
 
 		fixture.UpdateFile("media", "convert.py", "print('changed')");
-		await WaitForCatalogRevisionAsync(session, stale.CatalogRevision + 1);
+		await AutomationFixture.WaitForCatalogRevisionAsync(session, stale.CatalogRevision + 1);
 
 		var exception = await Assert.ThrowsExactlyAsync<InvalidOperationException>(
 			() => session.InvokeAsync(stale).AsTask());
@@ -155,7 +155,7 @@ public sealed class AutomationSessionTests
 
 		var revision = session.Snapshot.CatalogRevision;
 		fixture.UpdateFile("media", "thumbnails.py", "print('changed')");
-		await WaitForCatalogRevisionAsync(session, revision + 1);
+		await AutomationFixture.WaitForCatalogRevisionAsync(session, revision + 1);
 		await session.InvokeAsync(fixture.Invocation(session, "hoa.media/convert"));
 
 		Assert.AreEqual(2, trust.RequestCount);
@@ -193,7 +193,7 @@ public sealed class AutomationSessionTests
 
 		async Task InvokeOnceAsync()
 		{
-			await using IAutomationSession session = new AutomationSession(
+			await using IAutomationSession session = await AutomationSession.CreateAsync(
 				fixture.Options,
 				AutomationManifestCatalog.Discover(fixture.Options.CatalogOptions),
 				store,
@@ -740,16 +740,4 @@ public sealed class AutomationSessionTests
 		}
 	}
 
-	private static async Task WaitForCatalogRevisionAsync(IAutomationSession session, long minimumRevision)
-	{
-		var deadline = DateTime.UtcNow.AddSeconds(15);
-		while (DateTime.UtcNow < deadline)
-		{
-			if (session.Snapshot.CatalogRevision >= minimumRevision)
-				return;
-			await Task.Delay(10);
-		}
-
-		throw new AssertFailedException($"Expected Automation catalog revision {minimumRevision}.");
-	}
 }

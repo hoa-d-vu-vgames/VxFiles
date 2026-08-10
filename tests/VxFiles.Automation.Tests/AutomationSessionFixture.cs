@@ -136,6 +136,23 @@ internal sealed class AutomationFixture : IDisposable
 				[.. items.Select(path => new SelectedPath(path, SelectedPathKind.File, SelectedLocationKind.Local))]));
 	}
 
+	/// <summary>
+	/// Blocks until the session has taken up a catalog change, which arrives through a debounced file watcher
+	/// rather than on the calling thread.
+	/// </summary>
+	public static async Task WaitForCatalogRevisionAsync(IAutomationSession session, long minimumRevision)
+	{
+		var deadline = DateTime.UtcNow.AddSeconds(15);
+		while (DateTime.UtcNow < deadline)
+		{
+			if (session.Snapshot.CatalogRevision >= minimumRevision)
+				return;
+			await Task.Delay(10);
+		}
+
+		throw new AssertFailedException($"Expected Automation catalog revision {minimumRevision}.");
+	}
+
 	public static AutomationActionId ParseActionId(string value)
 	{
 		var separator = value.LastIndexOf('/');
