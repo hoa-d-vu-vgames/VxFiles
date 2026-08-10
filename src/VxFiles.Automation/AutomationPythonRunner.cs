@@ -46,7 +46,7 @@ internal static class AutomationPythonRunner
 		CancellationToken cancellationToken,
 		CancellationToken shutdownCancellationToken)
 	{
-		VerifyPinnedPython(options);
+		await VerifyPinnedPythonAsync(options);
 		var runTemporaryPath = Path.Join(options.TemporaryRoot, runId.Value.ToString("N"));
 		var actionDataPath = Path.Join(
 			options.StateRoot,
@@ -413,7 +413,6 @@ internal static class AutomationPythonRunner
 					writer.WriteString("fingerprint", tool.Fingerprint);
 					if (tool.FileVersion is not null)
 						writer.WriteString("fileVersion", tool.FileVersion);
-					writer.WriteString("signatureStatus", tool.SignatureStatus);
 					writer.WriteEndObject();
 				}
 
@@ -512,13 +511,13 @@ internal static class AutomationPythonRunner
 		intents.AddRange(frame.Intents);
 	}
 
-	private static void VerifyPinnedPython(AutomationModuleOptions options)
+	private static async ValueTask VerifyPinnedPythonAsync(AutomationModuleOptions options)
 	{
 		var pinnedSha256 = options.Runtime.PythonSha256;
 		var expected = pinnedSha256.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase)
 			? pinnedSha256[7..]
 			: pinnedSha256;
-		var actual = Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(options.Runtime.PythonExecutablePath)));
+		var actual = await AutomationFileHash.ComputeHexAsync(options.Runtime.PythonExecutablePath);
 		if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
 			throw new InvalidOperationException("The app-local Python executable does not match its pinned SHA-256.");
 	}
