@@ -149,6 +149,23 @@ public sealed record AutomationPackageState(
 public sealed record AutomationActionSettings(
 	ImmutableDictionary<string, AutomationSettingValue> Values);
 
+/// <summary>
+/// Everything a user configured for one Automation Package, applied as a single unit.
+/// </summary>
+/// <remarks>
+/// Package-scoped because that is what the user is shown: one dialog, one Save.
+///
+/// <para>
+/// Both dictionaries are read per entry rather than wholesale, and neither need be complete. A tool or action
+/// the submission does not mention keeps what it had, so a dialog showing one action's settings does not have to
+/// reconstruct the rest of the package to save it. Clearing a tool therefore has exactly one spelling — submit it
+/// with an empty path — rather than two that are easy to confuse.
+/// </para>
+/// </remarks>
+public sealed record AutomationPackageConfiguration(
+	ImmutableDictionary<string, AutomationExternalToolConfiguration> ExternalTools,
+	ImmutableDictionary<AutomationActionLocalId, AutomationActionSettings> ActionSettings);
+
 /// <remarks>
 /// Identity rests on <paramref name="Fingerprint"/> alone: it is the only one of these the trust fingerprint
 /// mixes in. Do not add a signature status. A correct check reports <c>unsigned</c> for the FFmpeg builds people
@@ -186,6 +203,11 @@ public sealed record AutomationRunRecord(
 	string PackageVersion,
 	string TrustFingerprint);
 
+/// <remarks>
+/// The write members are plumbing the session writes through, not the seam a host configures a package by —
+/// that is <see cref="IAutomationSession.ApplyPackageConfigurationAsync"/>. A store can only persist; it cannot
+/// see the manifest a configuration has to be validated against, nor the snapshot the change has to reach.
+/// </remarks>
 public interface IAutomationStateStore
 {
 	ValueTask<AutomationPackageState> ReadPackageStateAsync(
@@ -197,8 +219,27 @@ public interface IAutomationStateStore
 		string fingerprint,
 		CancellationToken cancellationToken = default);
 
+	/// <summary>
+	/// Replaces a package's external-tool configuration, leaving its trust exactly as it was.
+	/// </summary>
+	/// <remarks>
+	/// Trust is neither renewed nor revoked here, and must not be. The fingerprint mixes in each resolved tool's
+	/// SHA-256, so pointing a tool at different content invalidates trust by arithmetic — whereas clearing trust
+	/// explicitly would revoke it when the user re-selects the same executable spelled as a different path, which
+	/// is what a shim install produces every time it is upgraded.
+	/// </remarks>
+	ValueTask WriteExternalToolsAsync(
+		AutomationPackageId packageId,
+		ImmutableDictionary<string, AutomationExternalToolConfiguration> externalTools,
+		CancellationToken cancellationToken = default);
+
 	ValueTask<AutomationActionSettings> ReadActionSettingsAsync(
 		AutomationActionId actionId,
+		CancellationToken cancellationToken = default);
+
+	ValueTask WriteActionSettingsAsync(
+		AutomationActionId actionId,
+		AutomationActionSettings settings,
 		CancellationToken cancellationToken = default);
 
 	ValueTask AppendRunRecordAsync(
@@ -233,5 +274,33 @@ public interface IAutomationSession : INotifyPropertyChanged, IAsyncDisposable
 
 	ValueTask CancelAsync(
 		AutomationRunId runId,
+		CancellationToken cancellationToken = default);
+
+	/// <summary>
+	/// Validates a whole package's configuration, persists it, and republishes the package it changes.
+	/// </summary>
+	/// <remarks>
+	/// One member rather than a store handed to the host, because applying a configuration owes three things and
+	/// a store can only do the middle one: what is valid is declared by the manifest, and what is published is
+	/// this session's snapshot.
+	///
+	/// <para>
+	/// Nothing is written until everything validates, so a configuration refused anywhere persists nothing —
+	/// including the entries in the same call that were fine. That covers refusal, which is the failure a user
+	/// can cause; it is not a transaction. A package's tools and each action's settings are separate files, so a
+	/// write that fails part way through leaves the earlier ones written.
+	/// </para>
+	///
+	/// <para>
+	/// Throws <see cref="InvalidOperationException"/> for a package or action the catalog does not have, a tool or
+	/// setting the manifest does not declare, a value outside what a setting accepts, and a tool path that is not
+	/// usable. A path known to be bad is refused rather than stored: an unconfigured tool is a state the run path
+	/// knows how to ask about, whereas a stored bad path would read as configured-and-broken for as long as it sat
+	/// there. To clear a tool, submit it with an empty path.
+	/// </para>
+	/// </remarks>
+	ValueTask ApplyPackageConfigurationAsync(
+		AutomationPackageId packageId,
+		AutomationPackageConfiguration configuration,
 		CancellationToken cancellationToken = default);
 }

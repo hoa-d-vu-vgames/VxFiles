@@ -159,6 +159,34 @@ internal sealed class AutomationSession : IAutomationSession
 		return ValueTask.CompletedTask;
 	}
 
+	public async ValueTask ApplyPackageConfigurationAsync(
+		AutomationPackageId packageId,
+		AutomationPackageConfiguration configuration,
+		CancellationToken cancellationToken = default)
+	{
+		ArgumentNullException.ThrowIfNull(configuration);
+		ThrowIfDisposed();
+
+		AutomationPackageDefinition package;
+		lock (_gate)
+		{
+			if (!_catalog.Packages.TryGetValue(packageId, out package!))
+				throw new InvalidOperationException($"Automation Package '{packageId.Value}' is unavailable.");
+		}
+
+		// Everything is screened before anything is written, so a configuration refused on its third entry does
+		// not leave the first two behind for the user to discover later.
+		var stored = await _stateStore.ReadPackageStateAsync(packageId, cancellationToken);
+		var externalTools = AutomationConfigurationRules.ScreenExternalTools(package, stored.ExternalTools, configuration.ExternalTools);
+		var actionSettings = AutomationConfigurationRules.ScreenActionSettings(package, configuration.ActionSettings);
+
+		await _stateStore.WriteExternalToolsAsync(packageId, externalTools, cancellationToken);
+		foreach (var (localId, settings) in actionSettings)
+			await _stateStore.WriteActionSettingsAsync(new(packageId, localId), settings, cancellationToken);
+
+		await RepublishPackageAsync(packageId, cancellationToken);
+	}
+
 	public async ValueTask DisposeAsync()
 	{
 		ImmutableArray<FileSystemWatcher> watchers;
@@ -344,6 +372,38 @@ internal sealed class AutomationSession : IAutomationSession
 		await _stateStore.AppendRunRecordAsync(
 			new(terminal, package.PackageVersion, preparation.LaunchFingerprint),
 			CancellationToken.None);
+	}
+
+	/// <summary>
+	/// Republishes one package from the catalog so an applied configuration is visible without a restart.
+	/// </summary>
+	/// <remarks>
+	/// Scoped to the configured package rather than rebuilding every one, because a package a run left marked
+	/// <see cref="AutomationAvailability.MissingDependency"/> should keep that mark until its own tool is
+	/// configured. Configuring this package clears its mark, which is the point.
+	/// </remarks>
+	private async Task RepublishPackageAsync(AutomationPackageId packageId, CancellationToken cancellationToken)
+	{
+		AutomationCatalogSnapshot catalogSnapshot;
+		lock (_gate)
+			catalogSnapshot = _catalog.Snapshot;
+
+		var discovered = catalogSnapshot.Packages.FirstOrDefault(item => item.Id == packageId);
+		if (discovered is null)
+			return;
+
+		var rebuilt = await AutomationSnapshotMapping.WithStoredSettingsAsync(_stateStore, [discovered], cancellationToken);
+		lock (_gate)
+		{
+			if (_disposed)
+				return;
+
+			var current = _snapshot.Packages.FirstOrDefault(item => item.Id == packageId);
+			if (current is null)
+				return;
+
+			ReplaceSnapshot(_snapshot with { Packages = _snapshot.Packages.Replace(current, rebuilt[0]) });
+		}
 	}
 
 	private bool IsPackageBusy(AutomationPackageId packageId)

@@ -37,8 +37,9 @@ Tests that create a symbolic link skip on an account without the privilege to cr
 
 - `Discover_disables_package_containing_reparse_point`, which proves a package tree still refuses one.
 - `AutomationDependencyResolverTests`' four link cases, which prove an external tool reached through a winget or scoop shim resolves to its target.
+- `Re_applying_the_same_executable_through_a_shim_does_not_ask_for_trust_again`, which proves re-pointing a configured tool at the same executable through a shim does not re-prompt for trust.
 
-The second group covers the only supported route to a shimmed FFmpeg, so a release whose run skipped them has not tested it. Enable Developer Mode on the release machine, or run the suite elevated.
+The last two groups cover the only supported route to a shimmed FFmpeg, so a release whose run skipped them has not tested it. Enable Developer Mode on the release machine, or run the suite elevated.
 
 ## Publish with GitHub CLI
 

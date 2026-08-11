@@ -32,9 +32,10 @@ internal static class AutomationDependencyResolver
 		var settings = ImmutableDictionary.CreateBuilder<string, AutomationSettingValue>(StringComparer.Ordinal);
 		foreach (var definition in action.Settings)
 		{
-			var value = AutomationSettingRules.Current(actionSettings.Values, definition.Key, definition.DefaultValue);
-			ValidateSetting(definition, value);
-			settings.Add(definition.Key, value);
+			var value = AutomationSettingRules.Current(actionSettings.Values, definition.Key, definition.Type, definition.DefaultValue);
+			if (!AutomationSettingRules.TryResolve(definition, value, out var resolved))
+				throw new InvalidOperationException($"Configured setting '{definition.Key}' is invalid; configure the action again.");
+			settings.Add(definition.Key, resolved);
 		}
 
 		var tools = ImmutableArray.CreateBuilder<AutomationExternalToolIdentity>();
@@ -54,26 +55,7 @@ internal static class AutomationDependencyResolver
 		if (!packageState.ExternalTools.TryGetValue(definition.Id, out var configuration))
 			throw new AutomationMissingDependencyException($"Configure the required external tool '{definition.DisplayName}'.");
 
-		// File.Exists is false for a directory, which is one of the two checks the old attribute test spelled
-		// out. What it no longer carries is the refusal of links themselves.
-		var configuredPath = Path.GetFullPath(configuration.ExecutablePath);
-		if (!Path.IsPathFullyQualified(configuration.ExecutablePath) ||
-			!HasExecutableExtension(configuredPath) ||
-			!File.Exists(configuredPath))
-		{
-			throw new AutomationMissingDependencyException($"Configure '{definition.DisplayName}' with an absolute ordinary executable path.");
-		}
-
-		// Everything above was asked of the link. Ask it again of the target, because neither guard survives the
-		// hop: File.Exists reports a dangling link as present, and ResolveLinkTarget hands back a target that is
-		// not there rather than throwing. A link may stand in for a program; it may not stand in for nothing, nor
-		// smuggle in something that is not a program.
-		var path = ResolveLinkTarget(configuredPath, definition.DisplayName);
-		if (!File.Exists(path))
-			throw new AutomationMissingDependencyException($"Configure '{definition.DisplayName}': its path leads to '{path}', which is not there. Reinstall it or configure the new location.");
-		if (!HasExecutableExtension(path))
-			throw new AutomationMissingDependencyException($"Configure '{definition.DisplayName}' with a path that leads to a program; this one leads to '{Path.GetFileName(path)}'.");
-
+		var path = RequireUsablePath(definition.DisplayName, configuration.ExecutablePath);
 		var version = FileVersionInfo.GetVersionInfo(path).FileVersion;
 		if (definition.MinimumFileVersion is not null)
 		{
@@ -95,54 +77,35 @@ internal static class AutomationDependencyResolver
 			version);
 	}
 
-	private static bool HasExecutableExtension(string path)
-		=> string.Equals(Path.GetExtension(path), ".exe", StringComparison.OrdinalIgnoreCase);
-
 	/// <summary>
-	/// Holds a link's target rather than the link, resolved on every run.
+	/// Returns what a configured path leads to, or refuses it with the reason it cannot be run.
 	/// </summary>
 	/// <remarks>
-	/// winget and scoop put their executables behind a shim, which is how most people have FFmpeg, and refusing
-	/// the link protected nothing: reads follow it, so the hash was always the target's. Resolving per run rather
-	/// than once at configuration time is what keeps such an install configured across an upgrade that re-points
-	/// the shim. Package and runtime trees are held to the opposite rule — see <see cref="AutomationTrustFingerprint"/>
-	/// — because those are content VxFiles hashes wholesale, not one file the user chose.
+	/// Shared by the run path and by applying a configuration, so a path a run would refuse is never stored. It
+	/// holds a link's target rather than the link, resolved on every run: winget and scoop put their executables
+	/// behind a shim, which is how most people have FFmpeg, and resolving per run is what keeps such an install
+	/// configured across an upgrade that re-points the shim. Package and runtime trees are held to the opposite
+	/// rule — see <see cref="AutomationTrustFingerprint"/> — because those are content VxFiles hashes wholesale,
+	/// not one file the user chose.
 	/// </remarks>
-	private static string ResolveLinkTarget(string path, string displayName)
+	public static string RequireUsablePath(string displayName, string executablePath)
 	{
-		try
+		var evaluation = AutomationExternalToolPathRules.Evaluate(executablePath);
+		return evaluation.Verdict switch
 		{
-			// Null means the path was never a link; returnFinalTarget walks a chain rather than one hop.
-			return File.ResolveLinkTarget(path, returnFinalTarget: true) is { } target
-				? Path.GetFullPath(target.FullName)
-				: path;
-		}
-		catch (IOException exception)
-		{
-			throw new AutomationMissingDependencyException($"Configure '{displayName}' with an executable path that resolves: {exception.Message}");
-		}
-	}
-
-	private static void ValidateSetting(AutomationSettingDefinition definition, AutomationSettingValue value)
-	{
-		var valid = definition.Type switch
-		{
-			AutomationSettingType.Boolean => value.Kind is AutomationSettingValueKind.Boolean,
-			AutomationSettingType.Integer => value.Kind is AutomationSettingValueKind.Integer &&
-				(definition.Minimum is null || value.IntegerValue >= definition.Minimum) &&
-				(definition.Maximum is null || value.IntegerValue <= definition.Maximum),
-			AutomationSettingType.Number => value.Kind is AutomationSettingValueKind.Number && double.IsFinite(value.NumberValue) &&
-				(definition.Minimum is null || value.NumberValue >= definition.Minimum) &&
-				(definition.Maximum is null || value.NumberValue <= definition.Maximum),
-			AutomationSettingType.String or AutomationSettingType.FilePath or AutomationSettingType.FolderPath =>
-				value.Kind is AutomationSettingValueKind.String && value.StringValue is not null &&
-				(definition.MinimumLength is null || value.StringValue.Length >= definition.MinimumLength) &&
-				(definition.MaximumLength is null || value.StringValue.Length <= definition.MaximumLength),
-			AutomationSettingType.Enum => value.Kind is AutomationSettingValueKind.String && value.StringValue is not null &&
-				definition.Values.Contains(value.StringValue, StringComparer.Ordinal),
-			_ => false,
+			AutomationToolPathVerdict.Valid => evaluation.EffectivePath,
+			AutomationToolPathVerdict.NotAbsolute or AutomationToolPathVerdict.Malformed or
+				AutomationToolPathVerdict.NotAnExecutable or AutomationToolPathVerdict.NotFound
+				=> throw new AutomationMissingDependencyException(
+					$"Configure '{displayName}' with an absolute ordinary executable path."),
+			AutomationToolPathVerdict.Unresolvable => throw new AutomationMissingDependencyException(
+				$"Configure '{displayName}' with an executable path that resolves."),
+			AutomationToolPathVerdict.TargetNotFound => throw new AutomationMissingDependencyException(
+				$"Configure '{displayName}': its path leads to '{evaluation.EffectivePath}', which is not there. Reinstall it or configure the new location."),
+			AutomationToolPathVerdict.TargetNotAnExecutable => throw new AutomationMissingDependencyException(
+				$"Configure '{displayName}' with a path that leads to a program; this one leads to '{Path.GetFileName(evaluation.EffectivePath)}'."),
+			_ => throw new AutomationMissingDependencyException(
+				$"Configure '{displayName}': its path cannot be used."),
 		};
-		if (!valid)
-			throw new InvalidOperationException($"Configured setting '{definition.Key}' is invalid; configure the action again.");
 	}
 }

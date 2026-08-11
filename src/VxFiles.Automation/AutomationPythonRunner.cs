@@ -400,7 +400,7 @@ internal static class AutomationPythonRunner
 				foreach (var (key, value) in dependencies.Settings.OrderBy(item => item.Key, StringComparer.Ordinal))
 				{
 					writer.WritePropertyName(key);
-					WriteSettingValue(writer, value);
+					AutomationSettingValueJson.Write(writer, value);
 				}
 
 				writer.WriteEndObject();
@@ -427,26 +427,6 @@ internal static class AutomationPythonRunner
 		process.StandardInput.Close();
 	}
 
-	private static void WriteSettingValue(Utf8JsonWriter writer, AutomationSettingValue value)
-	{
-		switch (value.Kind)
-		{
-			case AutomationSettingValueKind.Boolean:
-				writer.WriteBooleanValue(value.BooleanValue);
-				break;
-			case AutomationSettingValueKind.Integer:
-				writer.WriteNumberValue(value.IntegerValue);
-				break;
-			case AutomationSettingValueKind.Number:
-				writer.WriteNumberValue(value.NumberValue);
-				break;
-			case AutomationSettingValueKind.String:
-				writer.WriteStringValue(value.StringValue);
-				break;
-			default:
-				throw new InvalidOperationException("Unknown Automation setting value kind.");
-		}
-	}
 
 	private static async Task<OutputDrainResult> DrainStandardOutputAsync(
 		Process process,

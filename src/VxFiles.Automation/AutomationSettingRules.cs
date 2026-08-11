@@ -42,8 +42,58 @@ internal static partial class AutomationSettingRules
 	public static AutomationSettingValue Current(
 		ImmutableDictionary<string, AutomationSettingValue> stored,
 		string key,
+		AutomationSettingType type,
 		AutomationSettingValue defaultValue)
-		=> stored.GetValueOrDefault(key, defaultValue);
+		=> AsDeclared(type, stored.GetValueOrDefault(key, defaultValue));
+
+	/// <summary>
+	/// The value in the spelling its declared type calls for.
+	/// </summary>
+	/// <remarks>
+	/// JSON has a single number type, so a whole number stored for a <c>number</c> setting is read back as an
+	/// integer however it was written. A run and a host surface both have to see it as the number it was declared
+	/// to be — otherwise a number setting could never hold 2, and an editor would be chosen by the wrong kind.
+	/// </remarks>
+	private static AutomationSettingValue AsDeclared(AutomationSettingType type, AutomationSettingValue value)
+		=> type is AutomationSettingType.Number && value.Kind is AutomationSettingValueKind.Integer
+			? new(AutomationSettingValueKind.Number, NumberValue: value.IntegerValue)
+			: value;
+
+	/// <summary>
+	/// Accepts a value for a declared setting, in the spelling that declaration calls for.
+	/// </summary>
+	/// <remarks>
+	/// One rule for two callers: a run resolves stored settings through it, and applying a configuration screens
+	/// submitted ones through it, so a value a run would refuse can never be stored in the first place.
+	///
+	/// <para>
+	/// A <c>number</c> declaration accepts an integer-kinded value, for the reason <see cref="AsDeclared"/> gives.
+	/// </para>
+	/// </remarks>
+	public static bool TryResolve(
+		AutomationSettingDefinition definition,
+		AutomationSettingValue value,
+		out AutomationSettingValue resolved)
+	{
+		resolved = AsDeclared(definition.Type, value);
+		return definition.Type switch
+		{
+			AutomationSettingType.Boolean => resolved.Kind is AutomationSettingValueKind.Boolean,
+			AutomationSettingType.Integer => resolved.Kind is AutomationSettingValueKind.Integer &&
+				(definition.Minimum is null || resolved.IntegerValue >= definition.Minimum) &&
+				(definition.Maximum is null || resolved.IntegerValue <= definition.Maximum),
+			AutomationSettingType.Number => resolved.Kind is AutomationSettingValueKind.Number && double.IsFinite(resolved.NumberValue) &&
+				(definition.Minimum is null || resolved.NumberValue >= definition.Minimum) &&
+				(definition.Maximum is null || resolved.NumberValue <= definition.Maximum),
+			AutomationSettingType.String or AutomationSettingType.FilePath or AutomationSettingType.FolderPath =>
+				resolved.Kind is AutomationSettingValueKind.String && resolved.StringValue is not null &&
+				(definition.MinimumLength is null || resolved.StringValue.Length >= definition.MinimumLength) &&
+				(definition.MaximumLength is null || resolved.StringValue.Length <= definition.MaximumLength),
+			AutomationSettingType.Enum => resolved.Kind is AutomationSettingValueKind.String && resolved.StringValue is not null &&
+				definition.Values.Contains(resolved.StringValue, StringComparer.Ordinal),
+			_ => false,
+		};
+	}
 
 	public static ImmutableArray<AutomationSettingDefinition> Validate(JsonElement action)
 	{

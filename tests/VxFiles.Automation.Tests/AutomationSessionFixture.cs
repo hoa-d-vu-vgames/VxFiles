@@ -226,6 +226,12 @@ internal static class AutomationManifests
 	public const string DefaultPackageId = "hoa.media";
 
 	public static string Package(string packageId, params string[] actions)
+		=> PackageWith(packageId, string.Empty, actions);
+
+	/// <param name="extraProperties">
+	/// Package-level JSON spliced in after <c>author</c>, each line ending in its own comma.
+	/// </param>
+	public static string PackageWith(string packageId, string extraProperties, params string[] actions)
 		=> $$"""
 		{
 		  "schemaVersion": 1,
@@ -233,7 +239,7 @@ internal static class AutomationManifests
 		  "packageVersion": "1.0.0",
 		  "displayName": "Media tools",
 		  "description": "Media utilities",
-		  "author": "Hoa",
+		  "author": "Hoa",{{extraProperties}}
 		  "minimumHostVersion": "2.1.0",
 		  "python": { "requires": ">=3.14,<3.15" },
 		  "actions": [
@@ -297,6 +303,15 @@ internal sealed class MemoryStateStore : IAutomationStateStore
 		return ValueTask.CompletedTask;
 	}
 
+	public ValueTask WriteExternalToolsAsync(
+		AutomationPackageId packageId,
+		ImmutableDictionary<string, AutomationExternalToolConfiguration> externalTools,
+		CancellationToken cancellationToken = default)
+	{
+		_packages[packageId.Value] = ReadPackage(packageId.Value) with { ExternalTools = externalTools };
+		return ValueTask.CompletedTask;
+	}
+
 	public ValueTask<AutomationActionSettings> ReadActionSettingsAsync(
 		AutomationActionId actionId,
 		CancellationToken cancellationToken = default)
@@ -304,11 +319,23 @@ internal sealed class MemoryStateStore : IAutomationStateStore
 			? settings
 			: new AutomationActionSettings(ImmutableDictionary<string, AutomationSettingValue>.Empty));
 
+	public ValueTask WriteActionSettingsAsync(
+		AutomationActionId actionId,
+		AutomationActionSettings settings,
+		CancellationToken cancellationToken = default)
+	{
+		_actions[actionId.Value] = settings;
+		return ValueTask.CompletedTask;
+	}
+
 	public ValueTask AppendRunRecordAsync(AutomationRunRecord record, CancellationToken cancellationToken = default)
 	{
 		Records.Add(record);
 		return ValueTask.CompletedTask;
 	}
+
+	public ImmutableDictionary<string, AutomationExternalToolConfiguration> ExternalToolsFor(string packageId)
+		=> ReadPackage(packageId).ExternalTools;
 
 	private AutomationPackageState ReadPackage(string packageId)
 		=> _packages.TryGetValue(packageId, out var state)
@@ -362,10 +389,22 @@ internal sealed class BlockingStateStore : IAutomationStateStore
 		CancellationToken cancellationToken = default)
 		=> ValueTask.CompletedTask;
 
+	public ValueTask WriteExternalToolsAsync(
+		AutomationPackageId packageId,
+		ImmutableDictionary<string, AutomationExternalToolConfiguration> externalTools,
+		CancellationToken cancellationToken = default)
+		=> ValueTask.CompletedTask;
+
 	public ValueTask<AutomationActionSettings> ReadActionSettingsAsync(
 		AutomationActionId actionId,
 		CancellationToken cancellationToken = default)
 		=> ValueTask.FromResult(new AutomationActionSettings(ImmutableDictionary<string, AutomationSettingValue>.Empty));
+
+	public ValueTask WriteActionSettingsAsync(
+		AutomationActionId actionId,
+		AutomationActionSettings settings,
+		CancellationToken cancellationToken = default)
+		=> ValueTask.CompletedTask;
 
 	public ValueTask AppendRunRecordAsync(AutomationRunRecord record, CancellationToken cancellationToken = default)
 		=> ValueTask.CompletedTask;

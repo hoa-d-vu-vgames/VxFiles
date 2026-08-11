@@ -131,7 +131,7 @@ internal static class AutomationSnapshotMapping
 				{
 					Settings = [.. action.Settings.Select(setting => setting with
 					{
-						CurrentValue = AutomationSettingRules.Current(stored, setting.Key, setting.DefaultValue),
+						CurrentValue = AutomationSettingRules.Current(stored, setting.Key, setting.Type, setting.DefaultValue),
 					})],
 				};
 			}

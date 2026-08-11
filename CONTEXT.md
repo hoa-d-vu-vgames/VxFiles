@@ -39,6 +39,9 @@ What an Automation Action declares it accepts: how many items, of which kinds, w
 **Action Setting**
 A typed value an Automation Action declares in its manifest and a user configures per action, transported to the run alongside the selection. What it *is* and how it is *held* are separate: an enum, a file path and a folder path are all held as text, so a surface choosing between a dropdown, a picker and a text box needs the declared type rather than the stored kind. An action that has never been configured has the manifest's default, and a stored value that no longer satisfies its declaration refuses the run rather than being quietly replaced.
 
+**External Tool**
+A program an Automation Package declares it needs and the user points at, installed and updated by whoever installed it rather than by VxFiles. It is identified by the SHA-256 of what its path leads to and by nothing else, so the same executable named another way is the same tool, and a different build is a different one. The path is stored as the user spelled it and followed on every run, because the shims winget and scoop install are re-pointed by their own upgrades. A path known to be unusable is refused rather than stored: having no tool configured is a state the app can ask about, whereas a stored bad path reads as configured and broken.
+
 **Package Trust**
 Consent granted to a whole Automation Package, recorded against a fingerprint of its content, its runner, and the external tools it resolves. It is requested before the package's first run and again whenever that fingerprint moves, and it covers every action the package contains rather than the one that triggered the prompt.
 

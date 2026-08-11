@@ -77,6 +77,33 @@ public sealed class FileAutomationStateStore : IAutomationStateStore
 		}
 	}
 
+	public async ValueTask WriteExternalToolsAsync(
+		AutomationPackageId packageId,
+		ImmutableDictionary<string, AutomationExternalToolConfiguration> externalTools,
+		CancellationToken cancellationToken = default)
+	{
+		ArgumentNullException.ThrowIfNull(externalTools);
+		await _gate.WaitAsync(cancellationToken);
+		try
+		{
+			var path = GetPackageStatePath(packageId);
+
+			// Read-modify-write rather than a fresh state, so configuring a tool carries the package's trust
+			// across untouched. Whether that trust still covers the new tool is decided by the fingerprint.
+			var state = File.Exists(path)
+				? await ReadPackageStateWithoutLockAsync(path, cancellationToken)
+				: EmptyPackageState();
+			await WriteJsonAtomicallyAsync(
+				path,
+				writer => WritePackageState(writer, state with { ExternalTools = externalTools }),
+				cancellationToken);
+		}
+		finally
+		{
+			_gate.Release();
+		}
+	}
+
 	public async ValueTask<AutomationActionSettings> ReadActionSettingsAsync(
 		AutomationActionId actionId,
 		CancellationToken cancellationToken = default)
@@ -91,6 +118,26 @@ public sealed class FileAutomationStateStore : IAutomationStateStore
 			await using var stream = File.OpenRead(path);
 			using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
 			return ParseActionSettings(document.RootElement);
+		}
+		finally
+		{
+			_gate.Release();
+		}
+	}
+
+	public async ValueTask WriteActionSettingsAsync(
+		AutomationActionId actionId,
+		AutomationActionSettings settings,
+		CancellationToken cancellationToken = default)
+	{
+		ArgumentNullException.ThrowIfNull(settings);
+		await _gate.WaitAsync(cancellationToken);
+		try
+		{
+			await WriteJsonAtomicallyAsync(
+				GetActionSettingsPath(actionId),
+				writer => WriteActionSettings(writer, settings),
+				cancellationToken);
 		}
 		finally
 		{
@@ -216,6 +263,24 @@ public sealed class FileAutomationStateStore : IAutomationStateStore
 		writer.WriteStartObject("externalTools");
 		foreach (var tool in state.ExternalTools.OrderBy(item => item.Key, StringComparer.Ordinal))
 			writer.WriteString(tool.Key, tool.Value.ExecutablePath);
+		writer.WriteEndObject();
+		writer.WriteEndObject();
+	}
+
+	/// <summary>
+	/// Writes settings in the shape <see cref="ParseActionSettings"/> reads, ordered so that saving the same
+	/// configuration twice produces the same bytes.
+	/// </summary>
+	private static void WriteActionSettings(Utf8JsonWriter writer, AutomationActionSettings settings)
+	{
+		writer.WriteStartObject();
+		writer.WriteStartObject("settings");
+		foreach (var (key, value) in settings.Values.OrderBy(setting => setting.Key, StringComparer.Ordinal))
+		{
+			writer.WritePropertyName(key);
+			AutomationSettingValueJson.Write(writer, value);
+		}
+
 		writer.WriteEndObject();
 		writer.WriteEndObject();
 	}
