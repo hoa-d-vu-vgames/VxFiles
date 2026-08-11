@@ -16,6 +16,8 @@ namespace Files.App.Dialogs
 	/// </remarks>
 	public sealed partial class AutomationConfigureDialog : ContentDialog
 	{
+		private static ICommonDialogService CommonDialogService { get; } = Ioc.Default.GetRequiredService<ICommonDialogService>();
+
 		private Func<AutomationPackageConfiguration, Task>? _apply;
 
 		private FrameworkElement RootAppElement
@@ -83,33 +85,22 @@ namespace Files.App.Dialogs
 		/// In the code-behind rather than on the row, because which picker opens is a host decision and the row is
 		/// a projection of the manifest's declaration.
 		/// </remarks>
-		private async void SettingBrowse_Click(object sender, RoutedEventArgs e)
+		private void SettingBrowse_Click(object sender, RoutedEventArgs e)
 		{
 			if (sender is not Button { Tag: AutomationConfigureSettingItem setting })
 				return;
 
-			if (setting.PicksFolder)
+			// One call for both, because which of them it is differs only by a flag — this is the same picker the
+			// rest of the app opens for a path.
+			if (CommonDialogService.Open_FileOpenDialog(
+				MainWindow.Instance.WindowHandle,
+				setting.PicksFolder,
+				[],
+				Environment.SpecialFolder.MyComputer,
+				out var path))
 			{
-				var folderPicker = new Windows.Storage.Pickers.FolderPicker
-				{
-					SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.ComputerFolder,
-				};
-				folderPicker.FileTypeFilter.Add("*");
-				WinRT.Interop.InitializeWithWindow.Initialize(folderPicker, MainWindow.Instance.WindowHandle);
-				if (await folderPicker.PickSingleFolderAsync() is { } folder)
-					setting.TextValue = folder.Path;
-
-				return;
+				setting.TextValue = path;
 			}
-
-			var filePicker = new Windows.Storage.Pickers.FileOpenPicker
-			{
-				SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.ComputerFolder,
-			};
-			filePicker.FileTypeFilter.Add("*");
-			WinRT.Interop.InitializeWithWindow.Initialize(filePicker, MainWindow.Instance.WindowHandle);
-			if (await filePicker.PickSingleFileAsync() is { } file)
-				setting.TextValue = file.Path;
 		}
 	}
 }

@@ -17,15 +17,14 @@ namespace Files.App.ViewModels.Dialogs
 	/// a rollback.
 	///
 	/// <para>
-	/// The one filesystem touch in the whole flow is <see cref="AutomationExternalToolPathRules"/>, called as the
-	/// user types. Nothing here parses a manifest, hashes anything, or starts a process; Save is one
+	/// It touches the filesystem in two places, both as the user types: <see cref="AutomationExternalToolPathRules"/>,
+	/// and the existence check deciding whether a configured sibling's folder has anything to offer an empty box.
+	/// Nothing here parses a manifest, hashes anything, or starts a process; Save is one
 	/// <see cref="IAutomationSession.ApplyPackageConfigurationAsync"/>.
 	/// </para>
 	/// </remarks>
 	public sealed partial class AutomationConfigureDialogViewModel : ObservableObject
 	{
-		private readonly AutomationPackageSnapshot _snapshot;
-
 		private AutomationConfigurePageItem? _selectedPage;
 		private string _failure = string.Empty;
 
@@ -33,7 +32,6 @@ namespace Files.App.ViewModels.Dialogs
 		{
 			ArgumentNullException.ThrowIfNull(snapshot);
 
-			_snapshot = snapshot;
 			PackageDisplayName = snapshot.DisplayName;
 
 			if (!snapshot.ExternalTools.IsEmpty)
@@ -56,12 +54,6 @@ namespace Files.App.ViewModels.Dialogs
 		public string PackageDisplayName { get; }
 
 		public ObservableCollection<AutomationConfigurePageItem> Pages { get; } = [];
-
-		/// <summary>
-		/// Gets whether this package has an external tool, and therefore whether the trust warning belongs on the
-		/// page the user is looking at.
-		/// </summary>
-		public bool HasExternalTools => !_snapshot.ExternalTools.IsEmpty;
 
 		public AutomationConfigurePageItem? SelectedPage
 		{
@@ -111,13 +103,16 @@ namespace Files.App.ViewModels.Dialogs
 			var settings = ImmutableDictionary.CreateBuilder<AutomationActionLocalId, AutomationActionSettings>();
 			foreach (var page in Pages.Where(page => page.ActionId is not null))
 			{
-				var changed = page.Settings.Where(setting => setting.IsChanged).ToArray();
-				if (changed.Length is 0)
+				if (!page.Settings.Any(setting => setting.IsChanged))
 					continue;
 
+				// Every setting the action declares, not only the edited ones. The write path merges per action
+				// and rewrites that action's settings whole, so submitting one key alone would take its siblings
+				// back to their manifest defaults — and the user would find that out the next time they opened
+				// this dialog.
 				settings.Add(
 					page.ActionId!.Value,
-					new(changed.ToImmutableDictionary(setting => setting.Key, setting => setting.Value, StringComparer.Ordinal)));
+					new(page.Settings.ToImmutableDictionary(setting => setting.Key, setting => setting.Value, StringComparer.Ordinal)));
 			}
 
 			return new(tools.ToImmutable(), settings.ToImmutable());

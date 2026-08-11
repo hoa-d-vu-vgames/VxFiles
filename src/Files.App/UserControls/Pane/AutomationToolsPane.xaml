@@ -40,8 +40,7 @@
 							AutomationProperties.HelpText="{helpers:ResourceString Name=AutomationToolsConfigureHint}"
 							Command="{x:Bind ConfigureCommand}"
 							Content="{helpers:ResourceString Name=AutomationToolsConfigure}"
-							ToolTipService.ToolTip="{helpers:ResourceString Name=AutomationToolsConfigureHint}"
-							Visibility="{x:Bind CanConfigure, Converter={StaticResource BoolToVisibilityConverter}}" />
+							ToolTipService.ToolTip="{helpers:ResourceString Name=AutomationToolsConfigureHint}" />
 					<StackPanel
 						HorizontalAlignment="Stretch"
 						Spacing="2">

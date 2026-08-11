@@ -45,6 +45,9 @@ A program an Automation Package declares it needs and the user points at, instal
 **Readiness**
 Whether an Automation Action can be run right now, decided per action from the External Tools that action names rather than per package, so configuring one tool of two leaves every action needing only the first perfectly runnable. Needing configuration is not a fault: it is the state every package declaring an External Tool is in on a clean install, and it is reported apart from a dependency that failed once a run had started. It is composed from what is stored each time the catalog is projected and never recorded, because a verdict written onto a snapshot is erased by the next catalog refresh. It costs a state lookup and a path check and nothing more — the SHA-256 and the declared version floor are the run's business alone, so an action reported ready can still be refused when it starts.
 
+**Configure Dialog**
+The one surface an Automation Package is configured from, opened from its root row in the Tools Tab and scoped to that package. It shows the user *Programs* for its External Tools, because the people pointing at FFmpeg are not reading this glossary; in code, in issues, and in tests the term stays External Tool. Its pages are views rather than save units — the whole dialog is applied in one call, so a partial save cannot exist and Cancel needs no rollback — and it opens entirely from the published snapshot, without reading anything.
+
 **Package Trust**
 Consent granted to a whole Automation Package, recorded against a fingerprint of its content, its runner, and the external tools it resolves. It is requested before the package's first run and again whenever that fingerprint moves, and it covers every action the package contains rather than the one that triggered the prompt.
 

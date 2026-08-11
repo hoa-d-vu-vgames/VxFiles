@@ -15,6 +15,8 @@ namespace Files.App.Data.Items
 	/// </remarks>
 	public sealed partial class AutomationConfigureToolItem : ObservableObject
 	{
+		private static ICommonDialogService CommonDialogService { get; } = Ioc.Default.GetRequiredService<ICommonDialogService>();
+
 		private readonly Action _changed;
 
 		private string _path;
@@ -50,7 +52,8 @@ namespace Files.App.Data.Items
 					return;
 
 				OnPropertyChanged(nameof(IsAcceptable));
-				OnPropertyChanged(nameof(HasMessage));
+				OnPropertyChanged(nameof(IsRefused));
+				OnPropertyChanged(nameof(IsConfirmed));
 				OnPropertyChanged(nameof(Message));
 				_changed();
 			}
@@ -69,7 +72,11 @@ namespace Files.App.Data.Items
 		/// </summary>
 		public bool IsRefused => !IsAcceptable;
 
-		public bool HasMessage => !string.IsNullOrWhiteSpace(Path);
+		/// <summary>
+		/// Gets whether the box holds a path that was checked and accepted, which is what earns a confirmation
+		/// rather than silence.
+		/// </summary>
+		public bool IsConfirmed => !string.IsNullOrWhiteSpace(Path) && IsAcceptable;
 
 		/// <summary>
 		/// Gets the confirmation or the refusal shown directly beneath the box, or an empty string while it is
@@ -128,19 +135,19 @@ namespace Files.App.Data.Items
 		}
 
 		[RelayCommand]
-		private async Task BrowseAsync()
+		private void Browse()
 		{
-			var picker = new Windows.Storage.Pickers.FileOpenPicker
-			{
-				SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.ComputerFolder,
-			};
-			picker.FileTypeFilter.Add(".exe");
-			WinRT.Interop.InitializeWithWindow.Initialize(picker, MainWindow.Instance.WindowHandle);
-
 			// A cancelled picker leaves the box alone rather than clearing it, which would read as the picker
 			// having chosen "nothing".
-			if (await picker.PickSingleFileAsync() is { } file)
-				Path = file.Path;
+			if (CommonDialogService.Open_FileOpenDialog(
+				MainWindow.Instance.WindowHandle,
+				false,
+				["*.exe"],
+				Environment.SpecialFolder.ProgramFiles,
+				out var path))
+			{
+				Path = path;
+			}
 		}
 	}
 }

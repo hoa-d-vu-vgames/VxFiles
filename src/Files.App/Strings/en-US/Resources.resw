@@ -4744,7 +4744,7 @@
     <value>That isn't a path Windows can use.</value>
   </data>
   <data name="AutomationConfigurePathNotAnExecutable" xml:space="preserve">
-    <value>That isn't a program (.exe).</value>
+    <value>That isn't a program (.exe). If it's a folder, choose the program file inside it.</value>
   </data>
   <data name="AutomationConfigurePathNotFound" xml:space="preserve">
     <value>Nothing is there. Check the path, or browse for the program.</value>

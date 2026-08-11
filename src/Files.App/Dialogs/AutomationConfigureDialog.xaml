@@ -23,12 +23,11 @@
 	<ContentDialog.Resources>
 		<ResourceDictionary>
 			<wctconverters:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
-
-			<!--  A confirmation reads as ordinary caption text; a refusal has to be visible as a refusal.  -->
 			<wctconverters:BoolToObjectConverter
-				x:Key="AcceptableToBrushConverter"
-				FalseValue="{ThemeResource SystemFillColorCriticalBrush}"
-				TrueValue="{ThemeResource TextFillColorSecondaryBrush}" />
+				x:Key="NegateBoolToVisibilityConverter"
+				FalseValue="Visible"
+				TrueValue="Collapsed" />
+
 
 			<!--  One external tool: its box, a Browse button, the verdict beneath, and any sibling suggestion.  -->
 			<DataTemplate x:Key="AutomationConfigureToolTemplate" x:DataType="items:AutomationConfigureToolItem">
@@ -39,21 +38,37 @@
 							<ColumnDefinition Width="*" />
 							<ColumnDefinition Width="Auto" />
 						</Grid.ColumnDefinitions>
-						<TextBox
-							AutomationProperties.Name="{x:Bind DisplayName}"
-							PlaceholderText="{helpers:ResourceString Name=AutomationConfigurePathPlaceholder}"
-							Text="{x:Bind Path, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+						<StackPanel>
+							<TextBox
+								AutomationProperties.Name="{x:Bind DisplayName}"
+								PlaceholderText="{helpers:ResourceString Name=AutomationConfigurePathPlaceholder}"
+								Text="{x:Bind Path, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+							<!--  Under the box rather than on its BorderBrush, which the TextBox template takes back
+							      the moment the box has focus — which is exactly while the user is typing.  -->
+							<Rectangle
+								Height="2"
+								Margin="1,-2,1,0"
+								Fill="{ThemeResource SystemFillColorCriticalBrush}"
+								Visibility="{x:Bind IsRefused, Mode=OneWay, Converter={StaticResource BoolToVisibilityConverter}}" />
+						</StackPanel>
 						<Button
 							Grid.Column="1"
+							VerticalAlignment="Top"
 							Command="{x:Bind BrowseCommand}"
 							Content="{helpers:ResourceString Name=Browse}" />
 					</Grid>
 					<TextBlock
-						Foreground="{x:Bind IsAcceptable, Mode=OneWay, Converter={StaticResource AcceptableToBrushConverter}}"
+						Foreground="{ThemeResource TextFillColorSecondaryBrush}"
 						Style="{ThemeResource CaptionTextBlockStyle}"
 						Text="{x:Bind Message, Mode=OneWay}"
 						TextWrapping="Wrap"
-						Visibility="{x:Bind HasMessage, Mode=OneWay, Converter={StaticResource BoolToVisibilityConverter}}" />
+						Visibility="{x:Bind IsConfirmed, Mode=OneWay, Converter={StaticResource BoolToVisibilityConverter}}" />
+					<TextBlock
+						Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+						Style="{ThemeResource CaptionTextBlockStyle}"
+						Text="{x:Bind Message, Mode=OneWay}"
+						TextWrapping="Wrap"
+						Visibility="{x:Bind IsRefused, Mode=OneWay, Converter={StaticResource BoolToVisibilityConverter}}" />
 					<HyperlinkButton
 						Padding="0"
 						Command="{x:Bind UseSuggestionCommand}"
@@ -64,44 +79,41 @@
 
 			<!--  One setting. The control is chosen by the declared type, not by how the value happens to be held.  -->
 			<DataTemplate x:Key="AutomationConfigureSettingTemplate" x:DataType="items:AutomationConfigureSettingItem">
+				<!--  Every editor is bound by Visibility rather than deferred behind x:Load. The flags below are
+				      set in the row's constructor and never change, so a one-time x:Load binding is the exact
+				      shape docs/VXFILES-UPSTREAM-MERGE-CHECKLIST.md records as never realizing its element —
+				      which here would render every setting as a label with no control under it.  -->
 				<StackPanel Spacing="4">
 					<TextBlock Style="{ThemeResource BodyStrongTextBlockStyle}" Text="{x:Bind DisplayName}" />
 
 					<ToggleSwitch
-						x:Name="ToggleEditor"
-						x:Load="{x:Bind IsToggle}"
 						AutomationProperties.Name="{x:Bind DisplayName}"
-						IsOn="{x:Bind BooleanValue, Mode=TwoWay}" />
+						IsOn="{x:Bind BooleanValue, Mode=TwoWay}"
+						Visibility="{x:Bind IsToggle, Converter={StaticResource BoolToVisibilityConverter}}" />
 
 					<NumberBox
-						x:Name="NumberEditor"
-						x:Load="{x:Bind IsNumber}"
 						AutomationProperties.Name="{x:Bind DisplayName}"
 						Maximum="{x:Bind Maximum}"
 						Minimum="{x:Bind Minimum}"
 						SmallChange="{x:Bind Step}"
 						SpinButtonPlacementMode="Compact"
-						Value="{x:Bind NumberValue, Mode=TwoWay}" />
+						Value="{x:Bind NumberValue, Mode=TwoWay}"
+						Visibility="{x:Bind IsNumber, Converter={StaticResource BoolToVisibilityConverter}}" />
 
 					<TextBox
-						x:Name="TextEditor"
-						x:Load="{x:Bind IsText}"
 						AutomationProperties.Name="{x:Bind DisplayName}"
 						MaxLength="{x:Bind MaximumLength}"
-						Text="{x:Bind TextValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+						Text="{x:Bind TextValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+						Visibility="{x:Bind IsText, Converter={StaticResource BoolToVisibilityConverter}}" />
 
 					<ComboBox
-						x:Name="ChoiceEditor"
-						x:Load="{x:Bind IsChoice}"
 						HorizontalAlignment="Stretch"
 						AutomationProperties.Name="{x:Bind DisplayName}"
 						ItemsSource="{x:Bind Choices}"
-						SelectedItem="{x:Bind TextValue, Mode=TwoWay}" />
+						SelectedItem="{x:Bind TextValue, Mode=TwoWay}"
+						Visibility="{x:Bind IsChoice, Converter={StaticResource BoolToVisibilityConverter}}" />
 
-					<Grid
-						x:Name="PathEditor"
-						x:Load="{x:Bind IsPath}"
-						ColumnSpacing="8">
+					<Grid ColumnSpacing="8" Visibility="{x:Bind IsPath, Converter={StaticResource BoolToVisibilityConverter}}">
 						<Grid.ColumnDefinitions>
 							<ColumnDefinition Width="*" />
 							<ColumnDefinition Width="Auto" />
