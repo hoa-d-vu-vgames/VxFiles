@@ -361,6 +361,35 @@ public sealed class AutomationPackageConfigurationTests
 		Assert.HasCount(1, state.ExternalTools);
 	}
 
+	/// <summary>
+	/// What a configuration surface binds to. It has to be able to open, and be cancelled, without reading
+	/// anything — so the tools a package declares and the paths configured for them travel on the snapshot, the
+	/// way each setting's current value already does.
+	/// </summary>
+	[TestMethod]
+	public async Task The_snapshot_carries_the_declared_tools_and_what_is_configured_for_them()
+	{
+		using var fixture = AutomationFixture.Create();
+		using var tools = new ToolFolder();
+		AddPackage(fixture);
+		await using var session = await OpenAsync(fixture, new MemoryStateStore());
+
+		var declared = PackageOf(session).ExternalTools;
+		Assert.HasCount(2, declared);
+		Assert.AreEqual("FFmpeg", declared.Single(tool => tool.Id == "hoa.ffmpeg").DisplayName);
+		Assert.IsTrue(declared.All(tool => tool.ConfiguredPath.Length is 0));
+
+		var executable = tools.AddExecutable("ffmpeg.exe");
+		await session.ApplyPackageConfigurationAsync(
+			AutomationPackageId.Parse(AutomationManifests.DefaultPackageId),
+			Configuration(tools: [("hoa.ffmpeg", executable)]));
+
+		// As the user spelled it, not what it resolves to: an editor has to show them back what they typed.
+		var configured = PackageOf(session).ExternalTools;
+		Assert.AreEqual(executable, configured.Single(tool => tool.Id == "hoa.ffmpeg").ConfiguredPath);
+		Assert.IsEmpty(configured.Single(tool => tool.Id == "hoa.exiftool").ConfiguredPath);
+	}
+
 	private static void AddPackage(AutomationFixture fixture)
 		=> fixture.AddPackage(
 			"media",

@@ -47,10 +47,17 @@ internal static class AutomationSnapshotMapping
 			metadata.Icon,
 			AutomationAvailability.Disabled,
 			[diagnostic],
+			[],
 			[]);
 
+	/// <remarks>
+	/// The declared external tools reach the snapshot with no path attached. Discovery reads manifests and never
+	/// touches user state, so what is configured for them is applied by <see cref="WithStoredStateAsync"/>, the
+	/// same place each action's stored settings are.
+	/// </remarks>
 	public static AutomationPackageSnapshot AvailablePackage(
 		AutomationPackageMetadata metadata,
+		ImmutableArray<AutomationExternalToolDefinition> externalTools,
 		ImmutableArray<AutomationActionSnapshot> actions)
 		=> new(
 			metadata.Id,
@@ -61,6 +68,7 @@ internal static class AutomationSnapshotMapping
 			metadata.Icon,
 			AutomationAvailability.Available,
 			[],
+			[.. externalTools.Select(tool => new AutomationExternalToolSchema(tool.Id, tool.DisplayName, string.Empty))],
 			actions);
 
 	public static AutomationActionSnapshot DisabledAction(
@@ -177,6 +185,14 @@ internal static class AutomationSnapshotMapping
 			{
 				Actions = actions,
 				Availability = AutomationReadinessRules.ForPackage(package.Availability, actions),
+				ExternalTools = state is null
+					? package.ExternalTools
+					: [.. package.ExternalTools.Select(tool => tool with
+					{
+						ConfiguredPath = state.ExternalTools.TryGetValue(tool.Id, out var configuration)
+							? configuration.ExecutablePath
+							: string.Empty,
+					})],
 			};
 		}
 

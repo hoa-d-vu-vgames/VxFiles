@@ -119,7 +119,7 @@ internal static class AutomationManifestValidator
 				.ToImmutableDictionary(action => action.Snapshot.Id.LocalId, action => action.Definition!));
 
 		return new(
-			AutomationSnapshotMapping.AvailablePackage(metadata, [.. actions.Select(action => action.Snapshot)]),
+			AutomationSnapshotMapping.AvailablePackage(metadata, externalTools, [.. actions.Select(action => action.Snapshot)]),
 			true,
 			definition);
 	}

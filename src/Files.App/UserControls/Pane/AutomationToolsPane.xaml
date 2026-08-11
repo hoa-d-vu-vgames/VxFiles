@@ -26,8 +26,23 @@
 					AutomationProperties.Name="{x:Bind DisplayName}"
 					IsExpanded="{x:Bind IsExpanded, Mode=TwoWay}"
 					ItemsSource="{x:Bind Actions}">
-					<StackPanel
+					<Grid
 						Padding="0,4,0,4"
+						HorizontalAlignment="Stretch"
+						ColumnSpacing="8">
+						<Grid.ColumnDefinitions>
+							<ColumnDefinition Width="*" />
+							<ColumnDefinition Width="Auto" />
+						</Grid.ColumnDefinitions>
+						<Button
+							Grid.Column="1"
+							VerticalAlignment="Center"
+							AutomationProperties.HelpText="{helpers:ResourceString Name=AutomationToolsConfigureHint}"
+							Command="{x:Bind ConfigureCommand}"
+							Content="{helpers:ResourceString Name=AutomationToolsConfigure}"
+							ToolTipService.ToolTip="{helpers:ResourceString Name=AutomationToolsConfigureHint}"
+							Visibility="{x:Bind CanConfigure, Converter={StaticResource BoolToVisibilityConverter}}" />
+					<StackPanel
 						HorizontalAlignment="Stretch"
 						Spacing="2">
 						<StackPanel Orientation="Horizontal" Spacing="8">
@@ -59,6 +74,7 @@
 							TextWrapping="Wrap"
 							Visibility="{x:Bind HasDiagnostics, Converter={StaticResource BoolToVisibilityConverter}}" />
 					</StackPanel>
+					</Grid>
 				</TreeViewItem>
 			</DataTemplate>
 

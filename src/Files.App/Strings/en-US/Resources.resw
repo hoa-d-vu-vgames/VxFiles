@@ -4710,6 +4710,54 @@
   <data name="AutomationToolsRunNeedsConfiguration" xml:space="preserve">
     <value>Configure this package's external tools to run this action</value>
   </data>
+  <data name="AutomationToolsConfigure" xml:space="preserve">
+    <value>Configure</value>
+  </data>
+  <data name="AutomationToolsConfigureHint" xml:space="preserve">
+    <value>Set the programs and options this package uses</value>
+  </data>
+  <data name="AutomationConfigurePrograms" xml:space="preserve">
+    <value>Programs</value>
+  </data>
+  <data name="AutomationConfigurePages" xml:space="preserve">
+    <value>Configuration pages</value>
+  </data>
+  <data name="AutomationConfigurePageHasError" xml:space="preserve">
+    <value>This page has a problem to fix</value>
+  </data>
+  <data name="AutomationConfigureTrustNotice" xml:space="preserve">
+    <value>Changing a program's path asks you to trust this package again before its next run.</value>
+  </data>
+  <data name="AutomationConfigurePathPlaceholder" xml:space="preserve">
+    <value>Full path to the program, for example C:\Program Files\FFmpeg\bin\ffmpeg.exe</value>
+  </data>
+  <data name="AutomationConfigureUseSibling" xml:space="preserve">
+    <value>Use {0} from the {1} folder</value>
+  </data>
+  <data name="AutomationConfigurePathValid" xml:space="preserve">
+    <value>Ready: {0}</value>
+  </data>
+  <data name="AutomationConfigurePathNotAbsolute" xml:space="preserve">
+    <value>Enter a full path, starting with a drive letter.</value>
+  </data>
+  <data name="AutomationConfigurePathMalformed" xml:space="preserve">
+    <value>That isn't a path Windows can use.</value>
+  </data>
+  <data name="AutomationConfigurePathNotAnExecutable" xml:space="preserve">
+    <value>That isn't a program (.exe).</value>
+  </data>
+  <data name="AutomationConfigurePathNotFound" xml:space="preserve">
+    <value>Nothing is there. Check the path, or browse for the program.</value>
+  </data>
+  <data name="AutomationConfigurePathUnresolvable" xml:space="preserve">
+    <value>That shortcut can't be followed.</value>
+  </data>
+  <data name="AutomationConfigurePathTargetNotFound" xml:space="preserve">
+    <value>That shortcut leads to {0}, which isn't there. Reinstall the program, or enter its new location.</value>
+  </data>
+  <data name="AutomationConfigurePathTargetNotAnExecutable" xml:space="preserve">
+    <value>That shortcut doesn't lead to a program.</value>
+  </data>
   <data name="AutomationToolsRunFailed" xml:space="preserve">
     <value>The action could not be started. See the log for details.</value>
   </data>

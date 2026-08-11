@@ -1,0 +1,200 @@
+<!--  Copyright (c) VxFiles contributors. Licensed under the MIT License.  -->
+<ContentDialog
+	x:Class="Files.App.Dialogs.AutomationConfigureDialog"
+	xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+	xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+	xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+	xmlns:helpers="using:Files.App.Helpers"
+	xmlns:items="using:Files.App.Data.Items"
+	xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+	xmlns:wctconverters="using:CommunityToolkit.WinUI.Converters"
+	Title="{x:Bind ViewModel.PackageDisplayName}"
+	CloseButtonText="{helpers:ResourceString Name=Cancel}"
+	CornerRadius="{StaticResource OverlayCornerRadius}"
+	DefaultButton="Primary"
+	HighContrastAdjustment="None"
+	IsPrimaryButtonEnabled="{x:Bind ViewModel.CanSave, Mode=OneWay}"
+	PrimaryButtonClick="ContentDialog_PrimaryButtonClick"
+	PrimaryButtonText="{helpers:ResourceString Name=Save}"
+	RequestedTheme="{x:Bind RootAppElement.RequestedTheme, Mode=OneWay}"
+	Style="{StaticResource DefaultContentDialogStyle}"
+	mc:Ignorable="d">
+
+	<ContentDialog.Resources>
+		<ResourceDictionary>
+			<wctconverters:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
+
+			<!--  A confirmation reads as ordinary caption text; a refusal has to be visible as a refusal.  -->
+			<wctconverters:BoolToObjectConverter
+				x:Key="AcceptableToBrushConverter"
+				FalseValue="{ThemeResource SystemFillColorCriticalBrush}"
+				TrueValue="{ThemeResource TextFillColorSecondaryBrush}" />
+
+			<!--  One external tool: its box, a Browse button, the verdict beneath, and any sibling suggestion.  -->
+			<DataTemplate x:Key="AutomationConfigureToolTemplate" x:DataType="items:AutomationConfigureToolItem">
+				<StackPanel Spacing="4">
+					<TextBlock Style="{ThemeResource BodyStrongTextBlockStyle}" Text="{x:Bind DisplayName}" />
+					<Grid ColumnSpacing="8">
+						<Grid.ColumnDefinitions>
+							<ColumnDefinition Width="*" />
+							<ColumnDefinition Width="Auto" />
+						</Grid.ColumnDefinitions>
+						<TextBox
+							AutomationProperties.Name="{x:Bind DisplayName}"
+							PlaceholderText="{helpers:ResourceString Name=AutomationConfigurePathPlaceholder}"
+							Text="{x:Bind Path, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+						<Button
+							Grid.Column="1"
+							Command="{x:Bind BrowseCommand}"
+							Content="{helpers:ResourceString Name=Browse}" />
+					</Grid>
+					<TextBlock
+						Foreground="{x:Bind IsAcceptable, Mode=OneWay, Converter={StaticResource AcceptableToBrushConverter}}"
+						Style="{ThemeResource CaptionTextBlockStyle}"
+						Text="{x:Bind Message, Mode=OneWay}"
+						TextWrapping="Wrap"
+						Visibility="{x:Bind HasMessage, Mode=OneWay, Converter={StaticResource BoolToVisibilityConverter}}" />
+					<HyperlinkButton
+						Padding="0"
+						Command="{x:Bind UseSuggestionCommand}"
+						Content="{x:Bind SuggestionLabel, Mode=OneWay}"
+						Visibility="{x:Bind HasSuggestion, Mode=OneWay, Converter={StaticResource BoolToVisibilityConverter}}" />
+				</StackPanel>
+			</DataTemplate>
+
+			<!--  One setting. The control is chosen by the declared type, not by how the value happens to be held.  -->
+			<DataTemplate x:Key="AutomationConfigureSettingTemplate" x:DataType="items:AutomationConfigureSettingItem">
+				<StackPanel Spacing="4">
+					<TextBlock Style="{ThemeResource BodyStrongTextBlockStyle}" Text="{x:Bind DisplayName}" />
+
+					<ToggleSwitch
+						x:Name="ToggleEditor"
+						x:Load="{x:Bind IsToggle}"
+						AutomationProperties.Name="{x:Bind DisplayName}"
+						IsOn="{x:Bind BooleanValue, Mode=TwoWay}" />
+
+					<NumberBox
+						x:Name="NumberEditor"
+						x:Load="{x:Bind IsNumber}"
+						AutomationProperties.Name="{x:Bind DisplayName}"
+						Maximum="{x:Bind Maximum}"
+						Minimum="{x:Bind Minimum}"
+						SmallChange="{x:Bind Step}"
+						SpinButtonPlacementMode="Compact"
+						Value="{x:Bind NumberValue, Mode=TwoWay}" />
+
+					<TextBox
+						x:Name="TextEditor"
+						x:Load="{x:Bind IsText}"
+						AutomationProperties.Name="{x:Bind DisplayName}"
+						MaxLength="{x:Bind MaximumLength}"
+						Text="{x:Bind TextValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+
+					<ComboBox
+						x:Name="ChoiceEditor"
+						x:Load="{x:Bind IsChoice}"
+						HorizontalAlignment="Stretch"
+						AutomationProperties.Name="{x:Bind DisplayName}"
+						ItemsSource="{x:Bind Choices}"
+						SelectedItem="{x:Bind TextValue, Mode=TwoWay}" />
+
+					<Grid
+						x:Name="PathEditor"
+						x:Load="{x:Bind IsPath}"
+						ColumnSpacing="8">
+						<Grid.ColumnDefinitions>
+							<ColumnDefinition Width="*" />
+							<ColumnDefinition Width="Auto" />
+						</Grid.ColumnDefinitions>
+						<TextBox
+							AutomationProperties.Name="{x:Bind DisplayName}"
+							Text="{x:Bind TextValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+						<Button
+							Grid.Column="1"
+							Click="SettingBrowse_Click"
+							Content="{helpers:ResourceString Name=Browse}"
+							Tag="{x:Bind}" />
+					</Grid>
+
+					<TextBlock
+						Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+						Style="{ThemeResource CaptionTextBlockStyle}"
+						Text="{x:Bind Description}"
+						TextWrapping="Wrap"
+						Visibility="{x:Bind HasDescription, Converter={StaticResource BoolToVisibilityConverter}}" />
+				</StackPanel>
+			</DataTemplate>
+		</ResourceDictionary>
+	</ContentDialog.Resources>
+
+	<Grid Width="720" Height="440" ColumnSpacing="12">
+		<Grid.ColumnDefinitions>
+			<ColumnDefinition Width="240" />
+			<ColumnDefinition Width="*" />
+		</Grid.ColumnDefinitions>
+
+		<!--  The rail. A page holding something Save is waiting on is marked, so an error cannot hide behind it.  -->
+		<ListView
+			x:Name="PageRail"
+			AutomationProperties.Name="{helpers:ResourceString Name=AutomationConfigurePages}"
+			ItemsSource="{x:Bind ViewModel.Pages}"
+			SelectedItem="{x:Bind ViewModel.SelectedPage, Mode=TwoWay}"
+			SelectionMode="Single">
+			<ListView.ItemTemplate>
+				<DataTemplate x:DataType="items:AutomationConfigurePageItem">
+					<Grid ColumnSpacing="8">
+						<Grid.ColumnDefinitions>
+							<ColumnDefinition Width="*" />
+							<ColumnDefinition Width="Auto" />
+						</Grid.ColumnDefinitions>
+						<TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis" />
+						<FontIcon
+							Grid.Column="1"
+							AutomationProperties.Name="{helpers:ResourceString Name=AutomationConfigurePageHasError}"
+							FontSize="14"
+							Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+							Glyph="&#xEA39;"
+							ToolTipService.ToolTip="{helpers:ResourceString Name=AutomationConfigurePageHasError}"
+							Visibility="{x:Bind HasError, Mode=OneWay, Converter={StaticResource BoolToVisibilityConverter}}" />
+					</Grid>
+				</DataTemplate>
+			</ListView.ItemTemplate>
+		</ListView>
+
+		<ScrollViewer Grid.Column="1" Padding="4,0,12,0">
+			<StackPanel Spacing="16">
+
+				<!--  On the Programs page only, so it reaches the people whose next run it affects and nobody else.  -->
+				<InfoBar
+					IsClosable="False"
+					IsOpen="{x:Bind ViewModel.SelectedPage.IsPrograms, Mode=OneWay, FallbackValue=False}"
+					Message="{helpers:ResourceString Name=AutomationConfigureTrustNotice}"
+					Severity="Informational" />
+
+				<InfoBar
+					IsClosable="False"
+					IsOpen="{x:Bind ViewModel.HasFailure, Mode=OneWay}"
+					Message="{x:Bind ViewModel.Failure, Mode=OneWay}"
+					Severity="Error" />
+
+				<ItemsControl ItemTemplate="{StaticResource AutomationConfigureToolTemplate}" ItemsSource="{x:Bind ViewModel.SelectedPage.Tools, Mode=OneWay}">
+					<ItemsControl.ItemsPanel>
+						<ItemsPanelTemplate>
+							<StackPanel Spacing="16" />
+						</ItemsPanelTemplate>
+					</ItemsControl.ItemsPanel>
+				</ItemsControl>
+
+				<ItemsControl ItemTemplate="{StaticResource AutomationConfigureSettingTemplate}" ItemsSource="{x:Bind ViewModel.SelectedPage.Settings, Mode=OneWay}">
+					<ItemsControl.ItemsPanel>
+						<ItemsPanelTemplate>
+							<StackPanel Spacing="16" />
+						</ItemsPanelTemplate>
+					</ItemsControl.ItemsPanel>
+				</ItemsControl>
+
+			</StackPanel>
+		</ScrollViewer>
+	</Grid>
+
+</ContentDialog>

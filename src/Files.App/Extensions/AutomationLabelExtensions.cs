@@ -27,6 +27,36 @@ namespace Files.App.Extensions
 			};
 
 		/// <summary>
+		/// Returns the localized text shown beneath an external tool's path box, confirming what the path leads to
+		/// or saying why it cannot be used.
+		/// </summary>
+		/// <remarks>
+		/// Takes the whole evaluation rather than the verdict alone because the two outcomes worth naming a file for
+		/// are the ones a link produced: confirming a shim resolves to <c>ffmpeg.exe</c> is most of what tells the
+		/// user they picked the right thing.
+		/// </remarks>
+		public static string ToLabel(this AutomationToolPathEvaluation evaluation)
+		{
+			ArgumentNullException.ThrowIfNull(evaluation);
+
+			return evaluation.Verdict switch
+			{
+				AutomationToolPathVerdict.Valid => string.Format(
+					Strings.AutomationConfigurePathValid.GetLocalizedResource(),
+					SystemIO.Path.GetFileName(evaluation.EffectivePath)),
+				AutomationToolPathVerdict.NotAbsolute => Strings.AutomationConfigurePathNotAbsolute.GetLocalizedResource(),
+				AutomationToolPathVerdict.Malformed => Strings.AutomationConfigurePathMalformed.GetLocalizedResource(),
+				AutomationToolPathVerdict.NotAnExecutable => Strings.AutomationConfigurePathNotAnExecutable.GetLocalizedResource(),
+				AutomationToolPathVerdict.NotFound => Strings.AutomationConfigurePathNotFound.GetLocalizedResource(),
+				AutomationToolPathVerdict.Unresolvable => Strings.AutomationConfigurePathUnresolvable.GetLocalizedResource(),
+				AutomationToolPathVerdict.TargetNotFound => string.Format(
+					Strings.AutomationConfigurePathTargetNotFound.GetLocalizedResource(),
+					SystemIO.Path.GetFileName(evaluation.EffectivePath)),
+				_ => Strings.AutomationConfigurePathTargetNotAnExecutable.GetLocalizedResource(),
+			};
+		}
+
+		/// <summary>
 		/// Returns the localized text shown for a run's outcome.
 		/// </summary>
 		public static string ToLabel(this AutomationRunState state)

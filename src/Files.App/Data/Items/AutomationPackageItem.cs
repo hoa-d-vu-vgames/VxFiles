@@ -18,17 +18,39 @@ namespace Files.App.Data.Items
 
 		private bool _isExpanded;
 
-		public AutomationPackageItem(AutomationPackageSnapshot snapshot, Func<AutomationActionItem, Task> run)
+		private readonly Func<AutomationPackageItem, Task> _configure;
+
+		public AutomationPackageItem(
+			AutomationPackageSnapshot snapshot,
+			Func<AutomationActionItem, Task> run,
+			Func<AutomationPackageItem, Task> configure)
 		{
 			ArgumentNullException.ThrowIfNull(snapshot);
 			ArgumentNullException.ThrowIfNull(run);
+			ArgumentNullException.ThrowIfNull(configure);
 
 			_snapshot = snapshot;
 			_run = run;
+			_configure = configure;
 			Diagnostics = string.Join(Environment.NewLine, snapshot.Diagnostics);
 			HealthLabel = DescribeHealth(snapshot);
 			ShowActions(snapshot.Actions);
 		}
+
+		/// <summary>
+		/// Gets whether this package has anything to configure at all.
+		/// </summary>
+		/// <remarks>
+		/// Enabled whenever the package declares a program or a setting — including, and especially, while it reads
+		/// <see cref="AutomationAvailability.NeedsConfiguration"/>, since the dialog is the only way out of that
+		/// state. It is off only for a package with nothing to set, which is what VxFiles Tracer shows.
+		/// </remarks>
+		public bool CanConfigure
+			=> !_snapshot.ExternalTools.IsEmpty ||
+				_snapshot.Actions.Any(action => !action.Settings.IsEmpty);
+
+		[RelayCommand(CanExecute = nameof(CanConfigure))]
+		private Task ConfigureAsync() => _configure(this);
 
 		/// <summary>
 		/// Gets the catalog snapshot this row was built from, including the actions a filter is hiding.

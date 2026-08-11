@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using CommunityToolkit.WinUI;
+using Files.App.Dialogs;
 using Microsoft.Extensions.Logging;
 using System.Collections.Immutable;
 using VxFiles.Automation.Abstractions;
@@ -231,6 +232,27 @@ namespace Files.App.ViewModels.UserControls
 			}
 		}
 
+		/// <summary>
+		/// Opens the Configure dialog for one package and applies what the user saved.
+		/// </summary>
+		/// <remarks>
+		/// The dialog is handed the snapshot the row was built from and one delegate to apply, so it neither reads
+		/// state nor holds the session. Everything the applied configuration changes arrives back the ordinary way,
+		/// through the snapshot the session republishes.
+		/// </remarks>
+		private async Task ConfigurePackageAsync(AutomationPackageItem item)
+		{
+			if (_session is not { } session)
+				return;
+
+			RunFailure = string.Empty;
+
+			var dialog = new AutomationConfigureDialog();
+			await dialog.ShowAsync(
+				item.Snapshot,
+				configuration => session.ApplyPackageConfigurationAsync(item.Snapshot.Id, configuration).AsTask());
+		}
+
 		private Task CancelRunAsync(AutomationRunId runId)
 		{
 			if (_session is not { } session)
@@ -297,7 +319,7 @@ namespace Files.App.ViewModels.UserControls
 
 			foreach (var package in snapshot.Packages)
 			{
-				var item = new AutomationPackageItem(package, RunActionAsync);
+				var item = new AutomationPackageItem(package, RunActionAsync, ConfigurePackageAsync);
 				if (expansion.TryGetValue(item.Id, out var wasExpanded))
 					item.IsExpanded = wasExpanded;
 

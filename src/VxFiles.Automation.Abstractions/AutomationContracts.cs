@@ -193,6 +193,25 @@ public sealed record AutomationActionSnapshot(
 	ImmutableArray<AutomationSettingSchema> Settings,
 	AutomationSelectionPolicy? Selection = null);
 
+/// <summary>
+/// One external tool an Automation Package declares, with the path the user has configured for it.
+/// </summary>
+/// <remarks>
+/// <paramref name="ConfiguredPath"/> is empty for a tool nobody has pointed at yet, and is otherwise the path
+/// exactly as it was stored — the spelling the user typed, not what it resolves to. A surface offering to edit it
+/// has to show them what they wrote, and a shim re-pointed by its own installer would otherwise read back as a
+/// path they never entered.
+///
+/// <para>
+/// Carried on the snapshot for the same reason <see cref="AutomationSettingSchema"/> carries its current value:
+/// a configuration surface can open, and be cancelled, without reading anything.
+/// </para>
+/// </remarks>
+public sealed record AutomationExternalToolSchema(
+	string Id,
+	string DisplayName,
+	string ConfiguredPath);
+
 public sealed record AutomationPackageSnapshot(
 	AutomationPackageId Id,
 	string PackageVersion,
@@ -202,6 +221,7 @@ public sealed record AutomationPackageSnapshot(
 	string? Icon,
 	AutomationAvailability Availability,
 	ImmutableArray<string> Diagnostics,
+	ImmutableArray<AutomationExternalToolSchema> ExternalTools,
 	ImmutableArray<AutomationActionSnapshot> Actions);
 
 public sealed record AutomationCatalogSnapshot(
