@@ -67,7 +67,7 @@ internal sealed class AutomationSession : IAutomationSession
 		IAutomationResultRouter resultRouter,
 		CancellationToken cancellationToken = default)
 	{
-		var packages = await AutomationSnapshotMapping.WithStoredStateAsync(stateStore, catalog, catalog.Snapshot.Packages, cancellationToken);
+		var packages = await AutomationSnapshotMapping.WithStoredStateAsync(stateStore, catalog, cancellationToken);
 		return new(options, catalog, packages, stateStore, trustConsent, resultRouter);
 	}
 
@@ -378,9 +378,11 @@ internal sealed class AutomationSession : IAutomationSession
 	/// Republishes one package from the catalog so an applied configuration is visible without a restart.
 	/// </summary>
 	/// <remarks>
-	/// Scoped to the configured package rather than rebuilding every one, because a package a run left marked
-	/// <see cref="AutomationAvailability.MissingDependency"/> should keep that mark until its own tool is
-	/// configured. Configuring this package clears its mark, which is the point.
+	/// Scoped to the configured package rather than rebuilding every one, so that configuring this package does
+	/// not also rebuild a sibling out of the <see cref="AutomationAvailability.MissingDependency"/> mark a failed
+	/// run left on it. That mark is not durable either way — it lives on the snapshot, and the next catalog
+	/// refresh rebuilds from manifests and drops it — but nothing done here should be what drops it. Clearing
+	/// <em>this</em> package's mark is the point.
 	/// </remarks>
 	private async Task RepublishPackageAsync(AutomationPackageId packageId, CancellationToken cancellationToken)
 	{
@@ -522,7 +524,7 @@ internal sealed class AutomationSession : IAutomationSession
 		{
 			await Task.Delay(CatalogRefreshDebounce, cancellationToken);
 			var replacement = AutomationManifestCatalog.Discover(_options.CatalogOptions);
-			var packages = await AutomationSnapshotMapping.WithStoredStateAsync(_stateStore, replacement, replacement.Snapshot.Packages, cancellationToken);
+			var packages = await AutomationSnapshotMapping.WithStoredStateAsync(_stateStore, replacement, cancellationToken);
 			lock (_gate)
 			{
 				if (_disposed || cancellationToken.IsCancellationRequested)

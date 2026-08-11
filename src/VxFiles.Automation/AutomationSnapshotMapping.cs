@@ -112,6 +112,18 @@ internal static class AutomationSnapshotMapping
 	/// like the bundled tracer costs no state I/O at all.
 	/// </para>
 	/// </remarks>
+	public static Task<ImmutableArray<AutomationPackageSnapshot>> WithStoredStateAsync(
+		IAutomationStateStore stateStore,
+		AutomationCatalog catalog,
+		CancellationToken cancellationToken)
+		=> WithStoredStateAsync(stateStore, catalog, catalog.Snapshot.Packages, cancellationToken);
+
+	/// <param name="packages">
+	/// The subset of <paramref name="catalog"/> to complete. Republishing one configured package takes this
+	/// overload, so that another package a failed run marked keeps its mark rather than being quietly rebuilt
+	/// out of it.
+	/// </param>
+	/// <inheritdoc cref="WithStoredStateAsync(IAutomationStateStore, AutomationCatalog, CancellationToken)"/>
 	public static async Task<ImmutableArray<AutomationPackageSnapshot>> WithStoredStateAsync(
 		IAutomationStateStore stateStore,
 		AutomationCatalog catalog,

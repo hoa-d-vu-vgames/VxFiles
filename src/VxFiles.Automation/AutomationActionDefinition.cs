@@ -59,4 +59,17 @@ internal sealed record AutomationPackageDefinition(
 	string DisplayName,
 	byte[] ManifestBytes,
 	ImmutableArray<AutomationExternalToolDefinition> ExternalTools,
-	ImmutableDictionary<AutomationActionLocalId, AutomationActionDefinition> Actions);
+	ImmutableDictionary<AutomationActionLocalId, AutomationActionDefinition> Actions)
+{
+	/// <summary>
+	/// Finds a declared external tool by the id an action or a stored configuration refers to it by.
+	/// </summary>
+	/// <remarks>
+	/// One lookup for the three that need it — resolving a run, screening a submitted configuration, and
+	/// composing readiness — so the ordinal comparison that decides whether two ids are the same tool is stated
+	/// once. Returns <see langword="null"/> rather than throwing, because only one of the three is answering for
+	/// an id a user supplied; the other two hold an id the manifest reader already checked against this list.
+	/// </remarks>
+	public AutomationExternalToolDefinition? FindExternalTool(string id)
+		=> ExternalTools.FirstOrDefault(tool => string.Equals(tool.Id, id, StringComparison.Ordinal));
+}

@@ -155,6 +155,11 @@ public sealed class AutomationReadinessTests
 
 		Assert.AreEqual(AutomationAvailability.NeedsConfiguration, ActionOf(session, "convert").Availability);
 		Assert.AreEqual(AutomationAvailability.Disabled, ActionOf(session, "broken").Availability);
+
+		// "None is worse" is read at the package's own level, not across its actions. A sibling that failed
+		// validation has never made a package worse than Available — it is reported as a count of how many
+		// survived — so it must not now suppress the one verdict the user can act on.
+		Assert.AreEqual(AutomationAvailability.NeedsConfiguration, PackageOf(session).Availability);
 	}
 
 	/// <summary>

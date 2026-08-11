@@ -41,7 +41,8 @@ internal static class AutomationDependencyResolver
 		var tools = ImmutableArray.CreateBuilder<AutomationExternalToolIdentity>();
 		foreach (var toolId in action.ExternalToolIds)
 		{
-			var definition = package.ExternalTools.First(tool => string.Equals(tool.Id, toolId, StringComparison.Ordinal));
+			// A reference no declaration answers is refused when the manifest is read, so this cannot miss.
+			var definition = package.FindExternalTool(toolId)!;
 			tools.Add(await ResolveExternalToolAsync(definition, packageState));
 		}
 

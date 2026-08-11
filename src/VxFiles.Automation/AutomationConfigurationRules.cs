@@ -42,7 +42,7 @@ internal static class AutomationConfigurationRules
 		var accepted = stored;
 		foreach (var (id, configuration) in submitted)
 		{
-			var definition = package.ExternalTools.FirstOrDefault(tool => string.Equals(tool.Id, id, StringComparison.Ordinal))
+			var definition = package.FindExternalTool(id)
 				?? throw new InvalidOperationException($"Automation Package '{package.Id.Value}' declares no external tool '{id}'.");
 			if (string.IsNullOrWhiteSpace(configuration.ExecutablePath))
 			{

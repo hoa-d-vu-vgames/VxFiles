@@ -80,12 +80,23 @@ namespace Files.App.Data.Items
 		/// Always counts every action the package declares, so filtering out healthy siblings cannot make a
 		/// package look broken.
 		/// </summary>
+		/// <remarks>
+		/// A package that is short of some of its actions but not all of them is described by the count rather
+		/// than by its own verdict. One action needing configuration makes the whole package need it, and
+		/// "Needs configuration" over a package whose other three actions run reads as though none of them did —
+		/// the row beneath gives the reason, and the count is what the root is for.
+		/// </remarks>
 		private static string DescribeHealth(AutomationPackageSnapshot snapshot)
 		{
-			if (snapshot.Availability is not AutomationAvailability.Available)
+			// Neither is about individual actions: a package that failed validation declares none that survived,
+			// and a run that could not resolve a dependency says nothing about which actions needed it.
+			if (snapshot.Availability is AutomationAvailability.Disabled or AutomationAvailability.MissingDependency)
 				return snapshot.Availability.ToLabel();
 
 			var available = snapshot.Actions.Count(action => action.Availability is AutomationAvailability.Available);
+			if (available is 0 && snapshot.Availability is AutomationAvailability.NeedsConfiguration)
+				return snapshot.Availability.ToLabel();
+
 			if (available == snapshot.Actions.Length)
 				return AutomationAvailability.Available.ToLabel();
 

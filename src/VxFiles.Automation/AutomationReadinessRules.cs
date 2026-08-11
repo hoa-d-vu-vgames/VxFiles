@@ -31,6 +31,14 @@ internal static class AutomationReadinessRules
 	/// <remarks>
 	/// The tool is named rather than its path, because the path is exactly what the user has to supply or correct
 	/// and quoting one that leads nowhere back at them explains nothing they do not already have on screen.
+	///
+	/// <para>
+	/// English, like every other diagnostic on a snapshot, rather than a verdict the host names — which is what
+	/// <see cref="AutomationToolPathVerdict"/> exists to be. The difference is that a verdict answers one path and
+	/// this answers a set of tools, so a host rendering it would have to compose the sentence anyway. A package
+	/// declaring two tools has to say which of them it is waiting for, and until the Configure dialog can show
+	/// that per tool, this is the only place it is said.
+	/// </para>
 	/// </remarks>
 	public static ImmutableArray<string> UnusableTools(
 		AutomationPackageDefinition package,
@@ -44,7 +52,7 @@ internal static class AutomationReadinessRules
 		foreach (var toolId in action.ExternalToolIds)
 		{
 			// A reference no declaration answers is refused when the manifest is read, so this cannot miss.
-			var definition = package.ExternalTools.First(tool => string.Equals(tool.Id, toolId, StringComparison.Ordinal));
+			var definition = package.FindExternalTool(toolId)!;
 			if (!state.ExternalTools.TryGetValue(toolId, out var configuration))
 			{
 				diagnostics.Add($"'{definition.DisplayName}' has not been configured yet.");
