@@ -72,6 +72,7 @@ namespace Files.App.Data.Items
 			AutomationActionRunState.NoFolder => Strings.AutomationToolsRunNoFolder.GetLocalizedResource(),
 			AutomationActionRunState.IncompatibleSelection => Strings.AutomationToolsRunIncompatibleSelection.GetLocalizedResource(),
 			AutomationActionRunState.Busy => Strings.AutomationToolsRunBusy.GetLocalizedResource(),
+			AutomationActionRunState.NeedsConfiguration => Strings.AutomationToolsRunNeedsConfiguration.GetLocalizedResource(),
 			_ => Strings.AutomationToolsRunUnavailable.GetLocalizedResource(),
 		};
 

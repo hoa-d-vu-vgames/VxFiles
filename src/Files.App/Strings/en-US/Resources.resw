@@ -4680,6 +4680,9 @@
   <data name="AutomationAvailabilityMissingDependency" xml:space="preserve">
     <value>Missing dependency</value>
   </data>
+  <data name="AutomationAvailabilityNeedsConfiguration" xml:space="preserve">
+    <value>Needs configuration</value>
+  </data>
   <data name="AutomationToolsActionsAvailable" xml:space="preserve">
     <value>{0} of {1} actions available</value>
   </data>
@@ -4703,6 +4706,9 @@
   </data>
   <data name="AutomationToolsRunBusy" xml:space="preserve">
     <value>Wait for the running action to finish</value>
+  </data>
+  <data name="AutomationToolsRunNeedsConfiguration" xml:space="preserve">
+    <value>Configure this package's external tools to run this action</value>
   </data>
   <data name="AutomationToolsRunFailed" xml:space="preserve">
     <value>The action could not be started. See the log for details.</value>

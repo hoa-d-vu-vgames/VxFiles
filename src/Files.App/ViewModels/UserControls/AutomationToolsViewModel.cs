@@ -389,7 +389,7 @@ namespace Files.App.ViewModels.UserControls
 
 		private static AutomationActionRunState Evaluate(AutomationActionItem action, RunAvailabilityContext context)
 		{
-			if (action.Snapshot.Availability is not AutomationAvailability.Available ||
+			if (action.Snapshot.Availability is not (AutomationAvailability.Available or AutomationAvailability.NeedsConfiguration) ||
 				action.Snapshot.Selection is not { } policy)
 			{
 				return AutomationActionRunState.Unavailable;
@@ -397,6 +397,13 @@ namespace Files.App.ViewModels.UserControls
 
 			if (context.Snapshot.ActiveRuns.Any(run => run.ActionId == action.Snapshot.Id))
 				return AutomationActionRunState.Running;
+
+			// Ahead of everything the current folder and selection decide, because it is the one reason a row can
+			// give that the user can act on from here, and it should not be hidden behind "wait for the running
+			// action" or "open a folder". Behind Running only, so a tool deleted mid-run does not relabel the row
+			// that is still going.
+			if (action.Snapshot.Availability is AutomationAvailability.NeedsConfiguration)
+				return AutomationActionRunState.NeedsConfiguration;
 
 			if (context.PackageBusy || context.OccupiedSlots >= AutomationLimits.MaximumConcurrentRuns)
 				return AutomationActionRunState.Busy;

@@ -52,7 +52,7 @@ internal sealed class AutomationSession : IAutomationSession
 	}
 
 	/// <summary>
-	/// Opens a session over a discovered catalog, with each action's stored settings already applied.
+	/// Opens a session over a discovered catalog, with each action's stored settings and readiness already applied.
 	/// </summary>
 	/// <remarks>
 	/// The state read happens before construction rather than after it, because constructing the session starts
@@ -67,7 +67,7 @@ internal sealed class AutomationSession : IAutomationSession
 		IAutomationResultRouter resultRouter,
 		CancellationToken cancellationToken = default)
 	{
-		var packages = await AutomationSnapshotMapping.WithStoredSettingsAsync(stateStore, catalog.Snapshot.Packages, cancellationToken);
+		var packages = await AutomationSnapshotMapping.WithStoredStateAsync(stateStore, catalog, catalog.Snapshot.Packages, cancellationToken);
 		return new(options, catalog, packages, stateStore, trustConsent, resultRouter);
 	}
 
@@ -384,15 +384,15 @@ internal sealed class AutomationSession : IAutomationSession
 	/// </remarks>
 	private async Task RepublishPackageAsync(AutomationPackageId packageId, CancellationToken cancellationToken)
 	{
-		AutomationCatalogSnapshot catalogSnapshot;
+		AutomationCatalog catalog;
 		lock (_gate)
-			catalogSnapshot = _catalog.Snapshot;
+			catalog = _catalog;
 
-		var discovered = catalogSnapshot.Packages.FirstOrDefault(item => item.Id == packageId);
+		var discovered = catalog.Snapshot.Packages.FirstOrDefault(item => item.Id == packageId);
 		if (discovered is null)
 			return;
 
-		var rebuilt = await AutomationSnapshotMapping.WithStoredSettingsAsync(_stateStore, [discovered], cancellationToken);
+		var rebuilt = await AutomationSnapshotMapping.WithStoredStateAsync(_stateStore, catalog, [discovered], cancellationToken);
 		lock (_gate)
 		{
 			if (_disposed)
@@ -522,7 +522,7 @@ internal sealed class AutomationSession : IAutomationSession
 		{
 			await Task.Delay(CatalogRefreshDebounce, cancellationToken);
 			var replacement = AutomationManifestCatalog.Discover(_options.CatalogOptions);
-			var packages = await AutomationSnapshotMapping.WithStoredSettingsAsync(_stateStore, replacement.Snapshot.Packages, cancellationToken);
+			var packages = await AutomationSnapshotMapping.WithStoredStateAsync(_stateStore, replacement, replacement.Snapshot.Packages, cancellationToken);
 			lock (_gate)
 			{
 				if (_disposed || cancellationToken.IsCancellationRequested)

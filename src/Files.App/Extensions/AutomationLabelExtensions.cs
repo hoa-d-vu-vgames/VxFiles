@@ -22,6 +22,7 @@ namespace Files.App.Extensions
 			{
 				AutomationAvailability.Available => Strings.AutomationAvailabilityAvailable.GetLocalizedResource(),
 				AutomationAvailability.MissingDependency => Strings.AutomationAvailabilityMissingDependency.GetLocalizedResource(),
+				AutomationAvailability.NeedsConfiguration => Strings.AutomationAvailabilityNeedsConfiguration.GetLocalizedResource(),
 				_ => Strings.AutomationAvailabilityDisabled.GetLocalizedResource(),
 			};
 

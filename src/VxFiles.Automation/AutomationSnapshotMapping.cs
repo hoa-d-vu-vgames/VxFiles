@@ -92,20 +92,29 @@ internal static class AutomationSnapshotMapping
 			selection);
 
 	/// <summary>
-	/// Applies each action's stored settings over the defaults discovery left in place, completing the snapshot.
+	/// Completes a discovered catalog from what the user has stored: each action's settings applied over the
+	/// declared defaults, and each action's readiness composed from the external tools it names.
 	/// </summary>
 	/// <remarks>
-	/// Discovery reads manifests and never touches user state, so the two halves of a settings projection meet
-	/// here. A caller has to apply this every time it takes a freshly discovered catalog — a catalog refresh
-	/// rebuilds from manifests, which know nothing about what a user configured.
+	/// Discovery reads manifests and never touches user state, so the two halves of a projection meet here. A
+	/// caller has to apply this every time it takes a freshly discovered catalog — a catalog refresh rebuilds
+	/// from manifests, which know nothing about what a user configured.
 	///
 	/// <para>
-	/// Only actions that declare settings are read for, so a catalog of packages like the bundled tracer — which
-	/// declares none — costs no state I/O at all.
+	/// Both halves live in the one pass because both are read from the same store at the same moment, and because
+	/// a caller that applied one and forgot the other would publish a snapshot that is half a lie. Readiness in
+	/// particular is composed here <em>every</em> time rather than recorded once: a verdict stored on a snapshot
+	/// is erased the next time the catalog watcher fires, whereas one recomputed from the store cannot go stale.
+	/// </para>
+	///
+	/// <para>
+	/// Nothing is read for a package that declares neither settings nor external tools, so a catalog of packages
+	/// like the bundled tracer costs no state I/O at all.
 	/// </para>
 	/// </remarks>
-	public static async Task<ImmutableArray<AutomationPackageSnapshot>> WithStoredSettingsAsync(
+	public static async Task<ImmutableArray<AutomationPackageSnapshot>> WithStoredStateAsync(
 		IAutomationStateStore stateStore,
+		AutomationCatalog catalog,
 		ImmutableArray<AutomationPackageSnapshot> packages,
 		CancellationToken cancellationToken)
 	{
@@ -113,38 +122,83 @@ internal static class AutomationSnapshotMapping
 		for (var packageIndex = 0; packageIndex < updatedPackages.Count; packageIndex++)
 		{
 			var package = updatedPackages[packageIndex];
-			if (package.Actions.All(action => action.Settings.IsEmpty))
+
+			// A package that failed validation is in the snapshot to be explained, not run: it has no definition
+			// behind it, so there is neither a setting to overlay nor a tool to look for.
+			if (!catalog.Packages.TryGetValue(package.Id, out var definition))
 				continue;
+			if (definition.ExternalTools.IsEmpty && package.Actions.All(action => action.Settings.IsEmpty))
+				continue;
+
+			// One read for the whole package, because external tools are declared and configured package-wide
+			// however many of its actions reference them.
+			var state = definition.ExternalTools.IsEmpty
+				? null
+				: await stateStore.ReadPackageStateAsync(package.Id, cancellationToken);
 
 			var updatedActions = package.Actions.ToBuilder();
 			for (var actionIndex = 0; actionIndex < updatedActions.Count; actionIndex++)
 			{
 				var action = updatedActions[actionIndex];
-				if (action.Settings.IsEmpty)
-					continue;
-
-				var stored = (await stateStore.ReadActionSettingsAsync(action.Id, cancellationToken)).Values;
-				if (stored.IsEmpty)
-					continue;
-
-				updatedActions[actionIndex] = action with
+				if (!action.Settings.IsEmpty)
 				{
-					Settings = [.. action.Settings.Select(setting => setting with
+					var stored = (await stateStore.ReadActionSettingsAsync(action.Id, cancellationToken)).Values;
+					if (!stored.IsEmpty)
 					{
-						CurrentValue = AutomationSettingRules.Current(stored, setting.Key, setting.Type, setting.DefaultValue),
-					})],
-				};
+						action = action with
+						{
+							Settings = [.. action.Settings.Select(setting => setting with
+							{
+								CurrentValue = AutomationSettingRules.Current(stored, setting.Key, setting.Type, setting.DefaultValue),
+							})],
+						};
+					}
+				}
+
+				updatedActions[actionIndex] = state is null
+					? action
+					: WithReadiness(definition, action, state);
 			}
 
-			updatedPackages[packageIndex] = package with { Actions = updatedActions.ToImmutable() };
+			var actions = updatedActions.ToImmutable();
+			updatedPackages[packageIndex] = package with
+			{
+				Actions = actions,
+				Availability = AutomationReadinessRules.ForPackage(package.Availability, actions),
+			};
 		}
 
 		return updatedPackages.ToImmutable();
 	}
 
 	/// <summary>
+	/// Marks an action that cannot reach one of its external tools, leaving one that failed validation alone.
+	/// </summary>
+	/// <remarks>
+	/// Only an action discovery found <see cref="AutomationAvailability.Available"/> is considered. A disabled
+	/// action has no definition to read tool references from, and telling the user to configure something for an
+	/// action whose manifest is broken would send them after a fault that is not theirs.
+	/// </remarks>
+	private static AutomationActionSnapshot WithReadiness(
+		AutomationPackageDefinition package,
+		AutomationActionSnapshot action,
+		AutomationPackageState state)
+	{
+		if (action.Availability is not AutomationAvailability.Available ||
+			!package.Actions.TryGetValue(action.Id.LocalId, out var definition))
+		{
+			return action;
+		}
+
+		var unusable = AutomationReadinessRules.UnusableTools(package, definition, state);
+		return unusable.IsEmpty
+			? action
+			: action with { Availability = AutomationAvailability.NeedsConfiguration, Diagnostics = unusable };
+	}
+
+	/// <summary>
 	/// Projects a declared setting with no stored value applied: discovery reads manifests, not user state, so
-	/// <c>CurrentValue</c> starts as the default until <see cref="WithStoredSettingsAsync"/> completes it.
+	/// <c>CurrentValue</c> starts as the default until <see cref="WithStoredStateAsync"/> completes it.
 	/// </summary>
 	private static AutomationSettingSchema Schema(AutomationSettingDefinition definition)
 		=> new(

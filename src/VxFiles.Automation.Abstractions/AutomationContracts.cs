@@ -90,11 +90,27 @@ public readonly record struct AutomationActionId
 	public override string ToString() => Value;
 }
 
+/// <summary>
+/// Whether an Automation Package or Action can be run, and what stands in the way when it cannot.
+/// </summary>
+/// <remarks>
+/// <see cref="NeedsConfiguration"/> is not a fault. A package that declares an external tool starts here on
+/// every clean install, because VxFiles neither installs nor locates such a tool — the user points at it. It is
+/// separate from <see cref="MissingDependency"/> for that reason: one is the first thing a bundled package has
+/// to say for itself, the other is something that went wrong.
+///
+/// <para>
+/// It is also the only member that moves on its own. The other three are decided when a manifest is read, while
+/// this one depends on what is configured and on what that configuration still points at, so it is recomposed
+/// every time the snapshot is projected rather than recorded once.
+/// </para>
+/// </remarks>
 public enum AutomationAvailability
 {
 	Available,
 	Disabled,
 	MissingDependency,
+	NeedsConfiguration,
 }
 
 /// <summary>

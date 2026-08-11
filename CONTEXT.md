@@ -42,6 +42,9 @@ A typed value an Automation Action declares in its manifest and a user configure
 **External Tool**
 A program an Automation Package declares it needs and the user points at, installed and updated by whoever installed it rather than by VxFiles. It is identified by the SHA-256 of what its path leads to and by nothing else, so the same executable named another way is the same tool, and a different build is a different one. The path is stored as the user spelled it and followed on every run, because the shims winget and scoop install are re-pointed by their own upgrades. A path known to be unusable is refused rather than stored: having no tool configured is a state the app can ask about, whereas a stored bad path reads as configured and broken.
 
+**Readiness**
+Whether an Automation Action can be run right now, decided per action from the External Tools that action names rather than per package, so configuring one tool of two leaves every action needing only the first perfectly runnable. Needing configuration is not a fault: it is the state every package declaring an External Tool is in on a clean install, and it is reported apart from a dependency that failed once a run had started. It is composed from what is stored each time the catalog is projected and never recorded, because a verdict written onto a snapshot is erased by the next catalog refresh. It costs a state lookup and a path check and nothing more — the SHA-256 and the declared version floor are the run's business alone, so an action reported ready can still be refused when it starts.
+
 **Package Trust**
 Consent granted to a whole Automation Package, recorded against a fingerprint of its content, its runner, and the external tools it resolves. It is requested before the package's first run and again whenever that fingerprint moves, and it covers every action the package contains rather than the one that triggered the prompt.
 
