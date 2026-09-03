@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.Windows.AppLifecycle;
 using Windows.Win32;
 using Windows.ApplicationModel;
@@ -24,8 +25,8 @@ namespace Files.App
 		internal static bool? SplashScreenImageLoaded { get; private set; }
 		public static string? OutputPath { get; set; }
 
-		private static CommandBarFlyout? _LastOpenedFlyout;
-		public static CommandBarFlyout? LastOpenedFlyout
+		private static FlyoutBase? _LastOpenedFlyout;
+		public static FlyoutBase? LastOpenedFlyout
 		{
 			set
 			{
@@ -52,9 +53,10 @@ namespace Files.App
 			InitializeComponent();
 
 			// Configure exception handlers
-			UnhandledException += (sender, e) => AppLifecycleHelper.HandleAppUnhandledException(e.Exception, true);
-			AppDomain.CurrentDomain.UnhandledException += (sender, e) => AppLifecycleHelper.HandleAppUnhandledException(e.ExceptionObject as Exception, false);
-			TaskScheduler.UnobservedTaskException += (sender, e) => AppLifecycleHelper.HandleAppUnhandledException(e.Exception, false);
+			AppLifecycleHelper.RecordFirstChanceExceptions();
+			UnhandledException += (sender, e) => AppLifecycleHelper.HandleAppUnhandledException(e.Exception, true, "Application.UnhandledException", e.Message);
+			AppDomain.CurrentDomain.UnhandledException += (sender, e) => AppLifecycleHelper.HandleAppUnhandledException(e.ExceptionObject as Exception, false, "AppDomain.UnhandledException");
+			TaskScheduler.UnobservedTaskException += (sender, e) => AppLifecycleHelper.HandleAppUnhandledException(e.Exception, false, "TaskScheduler.UnobservedTaskException");
 		}
 
 		/// <summary>
@@ -189,7 +191,9 @@ namespace Files.App
 		/// </summary>
 		private void Window_Activated(object sender, WindowActivatedEventArgs args)
 		{
-			Logger.LogInformation($"Window_Activated: State={args?.WindowActivationState.ToString()}");
+			Logger.LogInformation($"Window_Activated: State={args.WindowActivationState}");
+
+			ActiveSessionTracker.OnActivationChanged(args.WindowActivationState != WindowActivationState.Deactivated);
 
 			if (args.WindowActivationState != WindowActivationState.Deactivated)
 				AppModel.IsMainWindowClosed = false;
@@ -224,6 +228,9 @@ namespace Files.App
 				return;
 			}
 
+			// Persist the final active stretch; it is reported on the next launch
+			ActiveSessionTracker.OnActivationChanged(false);
+
 			// Save the current tab list in case it was overwriten by another instance
 			if (userSettingsService.GeneralSettingsService.ContinueLastSessionOnStartUp || userSettingsService.AppSettingsService.RestoreTabsOnStartup)
 				AppLifecycleHelper.SaveSessionTabs();
@@ -232,7 +239,8 @@ namespace Files.App
 
 			if (OutputPath is not null)
 			{
-				var instance = MainPageViewModel.AppInstances.FirstOrDefault(x => x.TabItemContent.IsCurrentInstance);
+				var instance = MainPageViewModel.AppInstances.FirstOrDefault(x =>
+					(x.TabItemContent ?? throw new InvalidOperationException("A tab does not have content.")).IsCurrentInstance);
 				if (instance is null)
 					return;
 
@@ -240,7 +248,7 @@ namespace Files.App
 				if (items is null)
 					return;
 
-				var results = items.Select(x => x.ItemPath).ToList();
+				var results = items.Select(x => x.ItemPath!).ToList();
 				System.IO.File.WriteAllLines(OutputPath, results);
 
 				using var eventHandle = PInvoke.CreateEvent(null, false, false, "FILEDIALOG");
@@ -331,11 +339,11 @@ namespace Files.App
 		/// </summary>
 		private static void LastOpenedFlyout_Closed(object? sender, object e)
 		{
-			if (sender is not CommandBarFlyout commandBarFlyout)
+			if (sender is not FlyoutBase flyoutBase)
 				return;
 
-			commandBarFlyout.Closed -= LastOpenedFlyout_Closed;
-			if (_LastOpenedFlyout == commandBarFlyout)
+			flyoutBase.Closed -= LastOpenedFlyout_Closed;
+			if (_LastOpenedFlyout == flyoutBase)
 				_LastOpenedFlyout = null;
 		}
 	}

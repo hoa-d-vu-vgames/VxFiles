@@ -72,7 +72,7 @@ namespace Files.App.Views
 			}
 		}
 
-		public IShellPage ActivePaneOrColumn
+		public IShellPage? ActivePaneOrColumn
 		{
 			get
 			{
@@ -80,7 +80,7 @@ namespace Files.App.Views
 				if (ActivePane is not null && ActivePane.IsColumnView && ActivePane.SlimContentPage is ColumnsLayoutPage columnLayoutPage)
 					return columnLayoutPage.ActiveColumnShellPage;
 
-				return ActivePane ?? GetPane(0)!;
+				return ActivePane ?? GetPane(0);
 			}
 		}
 
@@ -1074,6 +1074,11 @@ namespace Files.App.Views
 				sizer.ManipulationCompleted -= Sizer_ManipulationCompleted;
 				sizer.ManipulationStarted -= Sizer_ManipulationStarted;
 			}
+
+			_ActivePane = null;
+			RootGrid.Children.Clear();
+			RootGrid.RowDefinitions.Clear();
+			RootGrid.ColumnDefinitions.Clear();
 		}
 	}
 }

@@ -11,7 +11,7 @@ namespace Files.App.Utils.Storage
 {
 	public static class Win32StorageEnumerator
 	{
-		private static readonly ISizeProvider folderSizeProvider = Ioc.Default.GetService<ISizeProvider>();
+		private static readonly ISizeProvider folderSizeProvider = Ioc.Default.GetRequiredService<ISizeProvider>();
 		private static readonly IStorageCacheService fileListCache = Ioc.Default.GetRequiredService<IStorageCacheService>();
 
 		private static readonly string folderTypeTextLocalized = Strings.Folder.GetLocalizedResource();
@@ -28,6 +28,10 @@ namespace Files.App.Utils.Storage
 		)
 		{
 			var sampler = new IntervalSampler(500);
+			// The first flush is time-based only: folders that enumerate faster than the
+			// interval get a single sorted apply, slow folders show content early.
+			var firstBatchSampler = new IntervalSampler(50);
+			var hasFlushedFirstBatch = false;
 			var tempList = new List<ListedItem>();
 			var count = 0;
 
@@ -38,7 +42,7 @@ namespace Files.App.Utils.Storage
 			bool showDotFiles = userSettingsService.FoldersSettingsService.ShowDotFiles;
 			bool areAlternateStreamsVisible = userSettingsService.FoldersSettingsService.AreAlternateStreamsVisible;
 
-			var isGitRepo = GitHelpers.IsRepositoryEx(path, out var repoPath) && !string.IsNullOrEmpty((await GitHelpers.GetRepositoryHead(repoPath))?.Name);
+			var isGitRepo = GitHelpers.IsRepositoryEx(path, out var repoPath) && !string.IsNullOrEmpty(await GitHelpers.GetRepositoryHeadName(repoPath));
 
 			do
 			{
@@ -55,13 +59,14 @@ namespace Files.App.Utils.Storage
 						var file = await GetFile(findData, path, isGitRepo, cancellationToken);
 						if (file is not null)
 						{
+							var filePath = file.ItemPath!;
 							file.PreloadedIconData = await iconCacheService.GetIconAsync(file.ItemPath, file.FileExtension, false);
 							tempList.Add(file);
 							++count;
 
 							if (areAlternateStreamsVisible)
 							{
-								tempList.AddRange(EnumAdsForPath(file.ItemPath, file));
+								tempList.AddRange(EnumAdsForPath(filePath, file));
 							}
 						}
 					}
@@ -72,22 +77,23 @@ namespace Files.App.Utils.Storage
 							var folder = await GetFolder(findData, path, isGitRepo, cancellationToken);
 							if (folder is not null)
 							{
+								var folderPath = folder.ItemPath!;
 								folder.PreloadedIconData = await iconCacheService.GetIconAsync(folder.ItemPath, null, true);
 								tempList.Add(folder);
 								++count;
 
 								if (areAlternateStreamsVisible)
-									tempList.AddRange(EnumAdsForPath(folder.ItemPath, folder));
+									tempList.AddRange(EnumAdsForPath(folderPath, folder));
 
 								if (CalculateFolderSizes)
 								{
-									if (folderSizeProvider.TryGetSize(folder.ItemPath, out var size))
+									if (folderSizeProvider.TryGetSize(folderPath, out var size))
 									{
 										folder.FileSizeBytes = (long)size;
 										folder.FileSize = size.ToSizeString();
 									}
 
-									_ = folderSizeProvider.UpdateAsync(folder.ItemPath, cancellationToken);
+									_ = folderSizeProvider.UpdateAsync(folderPath, cancellationToken);
 								}
 							}
 						}
@@ -97,8 +103,12 @@ namespace Files.App.Utils.Storage
 				if (cancellationToken.IsCancellationRequested || count == countLimit)
 					break;
 
-				if (intermediateAction is not null && (count == 32 || sampler.CheckNow()))
+				if (intermediateAction is not null &&
+					(hasFlushedFirstBatch
+						? sampler.CheckNow()
+						: tempList.Count > 0 && firstBatchSampler.CheckNow()))
 				{
+					hasFlushedFirstBatch = true;
 					await intermediateAction(tempList);
 
 					// clear the temporary list every time we do an intermediate action
@@ -120,12 +130,12 @@ namespace Files.App.Utils.Storage
 		public static ListedItem GetAlternateStream((string Name, long Size) ads, ListedItem main)
 		{
 			string itemType = Strings.File.GetLocalizedResource();
-			string itemFileExtension = null;
+			string? itemFileExtension = null;
 
 			if (ads.Name.Contains('.'))
 			{
 				itemFileExtension = Path.GetExtension(ads.Name);
-				itemType = itemFileExtension.Trim('.') + " " + itemType;
+				itemType = itemFileExtension!.Trim('.') + " " + itemType;
 			}
 
 			string adsName = ads.Name.Substring(1, ads.Name.Length - 7); // Remove ":" and ":$DATA"
@@ -149,7 +159,7 @@ namespace Files.App.Utils.Storage
 			};
 		}
 
-		public static async Task<ListedItem> GetFolder(
+		public static async Task<ListedItem?> GetFolder(
 			Win32PInvoke.WIN32_FIND_DATA findData,
 			string pathRoot,
 			bool isGitRepo,
@@ -226,7 +236,7 @@ namespace Files.App.Utils.Storage
 			}
 		}
 
-		public static async Task<ListedItem> GetFile(
+		public static async Task<ListedItem?> GetFile(
 			Win32PInvoke.WIN32_FIND_DATA findData,
 			string pathRoot,
 			bool isGitRepo,
@@ -258,16 +268,15 @@ namespace Files.App.Utils.Storage
 			long itemSizeBytes = findData.GetSize();
 			var itemSize = itemSizeBytes.ToSizeString();
 			string itemType = Strings.File.GetLocalizedResource();
-			string itemFileExtension = null;
+			string? itemFileExtension = null;
 
 			if (findData.cFileName.Contains('.'))
 			{
 				itemFileExtension = Path.GetExtension(itemPath);
-				itemType = itemFileExtension.Trim('.') + " " + itemType;
+				itemType = itemFileExtension!.Trim('.') + " " + itemType;
 			}
 
 			bool itemThumbnailImgVis = false;
-			bool itemEmptyImgVis = true;
 
 			if (cancellationToken.IsCancellationRequested)
 				return null;
@@ -331,7 +340,9 @@ namespace Files.App.Utils.Storage
 			{
 				var isUrl = FileExtensionHelpers.IsWebLinkFile(findData.cFileName);
 
-				var shInfo = await FileOperationsHelpers.ParseLinkAsync(itemPath);
+				// Listing only needs the data stored in the link file; resolving the target
+				// can block on moved or unreachable targets and is done when the item is opened
+				var shInfo = await FileOperationsHelpers.ParseLinkAsync(itemPath, resolveTarget: false);
 				if (shInfo is null)
 					return null;
 
@@ -388,7 +399,7 @@ namespace Files.App.Utils.Storage
 					};
 				}
 			}
-			else if (App.LibraryManager.TryGetLibrary(itemPath, out LibraryLocationItem library))
+			else if (App.LibraryManager.TryGetLibrary(itemPath, out var library))
 			{
 				return new LibraryItem(library)
 				{

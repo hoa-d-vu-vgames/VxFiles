@@ -117,12 +117,6 @@ namespace Files.App.ViewModels
 			context.PageType is not ContentPageTypes.ReleaseNotes &&
 			context.PageType is not ContentPageTypes.Settings;
 
-		public bool ShowStatusBar =>
-			AppearanceSettingsService.ShowStatusBar &&
-			context.PageType is not ContentPageTypes.Home &&
-			context.PageType is not ContentPageTypes.ReleaseNotes &&
-			context.PageType is not ContentPageTypes.Settings;
-
 		public bool ShowReviewPrompt
 		{
 			get
@@ -189,9 +183,6 @@ namespace Files.App.ViewModels
 					case nameof(AppearanceSettingsService.ShowToolbar):
 						OnPropertyChanged(nameof(ShowToolbar));
 						break;
-					case nameof(AppearanceSettingsService.ShowStatusBar):
-						OnPropertyChanged(nameof(ShowStatusBar));
-						break;
 				}
 			};
 
@@ -201,7 +192,6 @@ namespace Files.App.ViewModels
 				{
 					case nameof(context.PageType):
 						OnPropertyChanged(nameof(ShowToolbar));
-						OnPropertyChanged(nameof(ShowStatusBar));
 						break;
 				}
 			};
@@ -389,7 +379,10 @@ namespace Files.App.ViewModels
 
 		private async void ExecuteNavigateToNumberedTabKeyboardAcceleratorCommand(KeyboardAcceleratorInvokedEventArgs? e)
 		{
-			var indexToSelect = e!.KeyboardAccelerator.Key switch
+			if (e is null)
+				return;
+
+			var indexToSelect = e.KeyboardAccelerator.Key switch
 			{
 				VirtualKey.Number1 => 0,
 				VirtualKey.Number2 => 1,
@@ -412,7 +405,8 @@ namespace Files.App.ViewModels
 				await Task.Delay(500);
 
 				// Focus the content of the selected tab item (needed for keyboard navigation)
-				context.ShellPage!.PaneHolder.FocusActivePane();
+				var paneHolder = context.ShellPage.GetRequiredPaneHolder();
+				paneHolder.FocusActivePane();
 			}
 
 			e.Handled = true;

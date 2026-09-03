@@ -34,8 +34,8 @@ namespace Files.App.Data.Models
 			}
 		}
 
-		private string currentSearchQuery;
-		public string CurrentSearchQuery
+		private string? currentSearchQuery;
+		public string? CurrentSearchQuery
 		{
 			get => currentSearchQuery;
 			set => SetProperty(ref currentSearchQuery, value);
@@ -144,6 +144,20 @@ namespace Files.App.Data.Models
 			{
 				SetProperty(ref isPageTypeLibrary, value);
 			}
+		}
+
+		private string? zipEncodingName;
+		public string? ZipEncodingName
+		{
+			get => zipEncodingName;
+			set => SetProperty(ref zipEncodingName, value);
+		}
+
+		private bool isZipEncodingUndetermined;
+		public bool IsZipEncodingUndetermined
+		{
+			get => isZipEncodingUndetermined;
+			set => SetProperty(ref isZipEncodingUndetermined, value);
 		}
 
 		public bool CanCopyPathInPage

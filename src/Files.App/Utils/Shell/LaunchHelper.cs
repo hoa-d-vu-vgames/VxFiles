@@ -4,9 +4,8 @@
 using Files.Shared.Helpers;
 using Microsoft.Extensions.Logging;
 using System.IO;
-using Vanara.PInvoke;
-using Vanara.Windows.Shell;
 using Windows.Win32;
+using Windows.Win32.Storage.FileSystem;
 using Windows.Win32.System.Com;
 using Windows.Win32.UI.Shell;
 
@@ -28,7 +27,7 @@ namespace Files.App.Utils.Shell
 				out _);
 		}
 
-		public static Task<bool> LaunchAppAsync(string application, string arguments, string workingDirectory)
+		public static Task<bool> LaunchAppAsync(string application, string? arguments, string? workingDirectory)
 		{
 			return HandleApplicationLaunch(application, arguments, workingDirectory);
 		}
@@ -54,7 +53,7 @@ namespace Files.App.Utils.Shell
 			return HandleApplicationLaunch("MSDT.exe", $"/id PCWDiagnostic /af \"{compatibilityTroubleshooterAnswerFile}\"", "");
 		}
 
-		private static async Task<bool> HandleApplicationLaunch(string application, string arguments, string workingDirectory)
+		private static async Task<bool> HandleApplicationLaunch(string application, string? arguments, string? workingDirectory)
 		{
 			var currentWindows = Win32Helper.GetDesktopWindows();
 
@@ -107,14 +106,14 @@ namespace Files.App.Utils.Shell
 						string key = (string)ent.Key;
 
 						// Skip USERNAME to avoid issues where files were executed as SYSTEM user (#12139)
-						if (string.Equals(key, "USERNAME", StringComparison.OrdinalIgnoreCase)) 
+						if (string.Equals(key, "USERNAME", StringComparison.OrdinalIgnoreCase))
 							continue;
 
-						process.StartInfo.EnvironmentVariables[key] = (string)ent.Value;
+						process.StartInfo.EnvironmentVariables[key] = (string)ent.Value!;
 					}
 
 					foreach (DictionaryEntry ent in Environment.GetEnvironmentVariables(EnvironmentVariableTarget.User))
-						process.StartInfo.EnvironmentVariables[(string)ent.Key] = (string)ent.Value;
+						process.StartInfo.EnvironmentVariables[(string)ent.Key] = (string)ent.Value!;
 
 					process.StartInfo.EnvironmentVariables["PATH"] = string.Join(';',
 						Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine),
@@ -186,7 +185,7 @@ namespace Files.App.Utils.Shell
 									using var cMenu = await ContextMenu.GetContextMenuForFiles(group.ToArray(), PInvoke.CMF_DEFAULTONLY);
 
 									if (cMenu is not null)
-										await cMenu.InvokeVerb(Shell32.CMDSTR_OPEN);
+										await cMenu.InvokeVerb("open");
 								}
 							}
 
@@ -202,7 +201,11 @@ namespace Files.App.Utils.Shell
 									using var cMenu = await ContextMenu.GetContextMenuForFiles(new[] { application }, PInvoke.CMF_DEFAULTONLY);
 
 									if (cMenu is not null)
-										await cMenu.InvokeItem(cMenu.Items.FirstOrDefault()?.ID ?? -1);
+									{
+										var menuItems = cMenu.Items
+											?? throw new InvalidOperationException("The shell context menu has no item collection.");
+										await cMenu.InvokeItem(menuItems.FirstOrDefault()?.ID ?? -1);
+									}
 
 									return true;
 								}, App.Logger);
@@ -214,12 +217,16 @@ namespace Files.App.Utils.Shell
 							var isAlternateStream = RegexHelpers.AlternateStream().IsMatch(application);
 							if (isAlternateStream)
 							{
-								var basePath = Path.Combine(Environment.GetEnvironmentVariable("TEMP"), Guid.NewGuid().ToString("n"));
-								Kernel32.CreateDirectory(basePath);
+								var tempPathRoot = Environment.GetEnvironmentVariable("TEMP");
+								if (tempPathRoot is null)
+									return false;
+
+								var basePath = Path.Combine(tempPathRoot, Guid.NewGuid().ToString("n"));
+								Directory.CreateDirectory(basePath);
 
 								var tempPath = Path.Combine(basePath, new string(Path.GetFileName(application).SkipWhile(x => x != ':').Skip(1).ToArray()));
-								using var hFileSrc = Kernel32.CreateFile(application, Kernel32.FileAccess.GENERIC_READ, FileShare.ReadWrite, null, FileMode.Open, FileFlagsAndAttributes.FILE_ATTRIBUTE_NORMAL);
-								using var hFileDst = Kernel32.CreateFile(tempPath, Kernel32.FileAccess.GENERIC_WRITE, 0, null, FileMode.Create, FileFlagsAndAttributes.FILE_ATTRIBUTE_NORMAL | FileFlagsAndAttributes.FILE_ATTRIBUTE_READONLY);
+								using var hFileSrc = PInvoke.CreateFile(application, (uint)FILE_ACCESS_RIGHTS.FILE_GENERIC_READ, FILE_SHARE_MODE.FILE_SHARE_READ | FILE_SHARE_MODE.FILE_SHARE_WRITE, null, FILE_CREATION_DISPOSITION.OPEN_EXISTING, FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_NORMAL, null);
+								using var hFileDst = PInvoke.CreateFile(tempPath, (uint)FILE_ACCESS_RIGHTS.FILE_GENERIC_WRITE, 0, null, FILE_CREATION_DISPOSITION.CREATE_ALWAYS, FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_NORMAL | FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_READONLY, null);
 
 								if (!hFileSrc.IsInvalid && !hFileDst.IsInvalid)
 								{
@@ -267,8 +274,12 @@ namespace Files.App.Utils.Shell
 		{
 			if (executable.StartsWith("\\\\?\\", StringComparison.Ordinal))
 			{
-				using var computer = new ShellFolder(Shell32.KNOWNFOLDERID.FOLDERID_ComputerFolder);
-				using var device = computer.FirstOrDefault(i => executable.Replace("\\\\?\\", "", StringComparison.Ordinal).StartsWith(i.Name, StringComparison.Ordinal));
+				using var computer = new ShellFolder(FOLDERID.FOLDERID_ComputerFolder);
+				using var device = computer.FirstOrDefault(i =>
+				{
+					return i.Name is { } name &&
+						executable.Replace("\\\\?\\", "", StringComparison.Ordinal).StartsWith(name, StringComparison.Ordinal);
+				});
 				var deviceId = device?.ParsingName;
 				var itemPath = RegexHelpers.WindowsPath().Replace(executable, "");
 				return deviceId is not null ? Path.Combine(deviceId, itemPath) : executable;
