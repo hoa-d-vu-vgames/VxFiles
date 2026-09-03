@@ -44,7 +44,7 @@ internal sealed partial class LibGit2Service // : IVersionControl
 	public event PropertyChangedEventHandler? IsExecutingGitActionChanged;
 	public event EventHandler? GitFetchCompleted;
 
-	public string? GetGitRepositoryPath(string? path, string root)
+	public string? GetGitRepositoryPath(string? path, string? root)
 	{
 		if (string.IsNullOrEmpty(root))
 			return null;
@@ -139,15 +139,18 @@ internal sealed partial class LibGit2Service // : IVersionControl
 			try
 			{
 				using var repository = new Repository(path);
-				var branch = GetValidBranches(repository.Branches).FirstOrDefault(b => b.IsCurrentRepositoryHead);
-				if (branch is not null)
+				var branch = repository.Head;
+				if (branch?.Tip is not null)
+				{
+					var trackingDetails = TryGetTrackingDetails(branch);
 					head = new BranchItem(
 						branch.FriendlyName,
-						branch.IsCurrentRepositoryHead,
+						true,
 						branch.IsRemote,
-						TryGetTrackingDetails(branch)?.AheadBy ?? 0,
-						TryGetTrackingDetails(branch)?.BehindBy ?? 0
+						trackingDetails?.AheadBy ?? 0,
+						trackingDetails?.BehindBy ?? 0
 					);
+				}
 			}
 			catch
 			{
@@ -160,9 +163,30 @@ internal sealed partial class LibGit2Service // : IVersionControl
 		return returnValue;
 	}
 
+	public Task<string?> GetRepositoryHeadName(string? path)
+	{
+		if (string.IsNullOrWhiteSpace(path))
+			return Task.FromResult<string?>(null);
+
+		return Task.Run(() =>
+		{
+			try
+			{
+				using var repository = new Repository(path);
+				var branch = repository.Head;
+				return branch?.Tip is null ? null : branch.FriendlyName;
+			}
+			// The repository may have been removed or corrupted after discovery returned its path
+			catch (LibGit2SharpException)
+			{
+				return null;
+			}
+		});
+	}
+
 	public async Task<bool> Checkout(string? repositoryPath, string? branch)
 	{
-		SentrySdk.Experimental.Metrics.EmitCounter("Triggered git checkout", 1);
+		SentrySdk.Metrics.EmitCounter("Triggered git checkout", 1);
 
 		if (string.IsNullOrWhiteSpace(repositoryPath) || !IsRepoValid(repositoryPath))
 			return false;
@@ -182,7 +206,9 @@ internal sealed partial class LibGit2Service // : IVersionControl
 			var dialog = DynamicDialogFactory.GetFor_GitMergeConflicts(checkoutBranch.FriendlyName, repository.Head.FriendlyName);
 			await dialog.ShowAsync();
 
-			var resolveConflictOption = (GitCheckoutOptions)dialog.ViewModel.AdditionalData;
+			var resolveConflictOption = dialog.ViewModel.AdditionalData is GitCheckoutOptions option
+				? option
+				: GitCheckoutOptions.None;
 
 			switch (resolveConflictOption)
 			{
@@ -199,7 +225,9 @@ internal sealed partial class LibGit2Service // : IVersionControl
 			var dialog = DynamicDialogFactory.GetFor_GitCheckoutConflicts(checkoutBranch.FriendlyName, repository.Head.FriendlyName);
 			await dialog.ShowAsync();
 
-			var resolveConflictOption = (GitCheckoutOptions)dialog.ViewModel.AdditionalData;
+			var resolveConflictOption = dialog.ViewModel.AdditionalData is GitCheckoutOptions option
+				? option
+				: GitCheckoutOptions.None;
 
 			switch (resolveConflictOption)
 			{
@@ -255,7 +283,7 @@ internal sealed partial class LibGit2Service // : IVersionControl
 
 	public async Task CreateNewBranchAsync(string repositoryPath, string activeBranch)
 	{
-		SentrySdk.Experimental.Metrics.EmitCounter("Triggered create git branch", 1);
+		SentrySdk.Metrics.EmitCounter("Triggered create git branch", 1);
 
 		var viewModel = new AddBranchDialogViewModel(repositoryPath, activeBranch);
 		var loadBranchesTask = viewModel.LoadBranches();
@@ -285,7 +313,7 @@ internal sealed partial class LibGit2Service // : IVersionControl
 
 	public async Task DeleteBranchAsync(string? repositoryPath, string? activeBranch, string? branchToDelete)
 	{
-		SentrySdk.Experimental.Metrics.EmitCounter("Triggered delete git branch", 1);
+		SentrySdk.Metrics.EmitCounter("Triggered delete git branch", 1);
 
 		if (string.IsNullOrWhiteSpace(repositoryPath) ||
 			string.IsNullOrWhiteSpace(activeBranch) ||
@@ -498,12 +526,10 @@ internal sealed partial class LibGit2Service // : IVersionControl
 	{
 		if (useSemaphore)
 			await GitOperationSemaphore.WaitAsync();
-		else
-			await Task.Yield();
 
 		try
 		{
-			return (T)payload();
+			return (T)await Task.Run(payload);
 		}
 		finally
 		{

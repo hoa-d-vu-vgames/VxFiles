@@ -5,7 +5,6 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using Microsoft.Win32;
 using System.IO;
-using Vanara.Windows.Shell;
 using Windows.Storage;
 
 namespace Files.App.Utils.Cloud
@@ -70,7 +69,7 @@ namespace Files.App.Utils.Cloud
 					continue;
 				}
 
-				var folder = folderResult.Result;
+				var folder = folderResult.Result!;
 				string title = reader["title"]?.ToString() ?? folder.Name;
 
 				Debug.WriteLine("YIELD RETURNING from `GoogleDriveCloudDetector.GetProviders()` (roots): ");
@@ -103,7 +102,7 @@ namespace Files.App.Utils.Cloud
 					continue;
 				}
 
-				var folder = folderResult.Result;
+				var folder = folderResult.Result!;
 				string title = reader["name"]?.ToString() ?? folder.Name;
 
 				Debug.WriteLine("YIELD RETURNING from `GoogleDriveCloudDetector.GetProviders` (media): ");
@@ -291,7 +290,6 @@ namespace Files.App.Utils.Cloud
 		{
 			// If `path` contains a shortcut named "My Drive", store its target in `shellFolderBaseFirst`.
 			// This happens when "My Drive syncing options" is set to "Mirror files".
-			// TODO: Avoid to use Vanara (#15000)
 			using var rootFolder = ShellFolderExtensions.GetShellItemFromPathOrPIDL(path) as ShellFolder;
 			var myDriveFolder = Environment.ExpandEnvironmentVariables((
 					rootFolder?.FirstOrDefault(si =>

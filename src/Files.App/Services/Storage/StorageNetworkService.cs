@@ -2,8 +2,6 @@
 // Licensed under the MIT License.
 
 using System.Text;
-using Vanara.PInvoke;
-using Vanara.Windows.Shell;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.NetworkManagement.WNet;
@@ -101,20 +99,21 @@ namespace Files.App.Services
 			var networkLocations = await STATask.Run(() =>
 			{
 				var locations = new List<ShellLinkItem>();
-				using (var netHood = new ShellFolder(Shell32.KNOWNFOLDERID.FOLDERID_NetHood))
+				using (var netHood = new ShellFolder(PInvoke.FOLDERID_NetHood))
 				{
 					foreach (var item in netHood)
 					{
 						if (item is ShellLink link)
 						{
-							locations.Add(ShellFolderExtensions.GetShellLinkItem(link));
+							if (ShellFolderExtensions.GetShellLinkItem(link) is { } linkItem)
+								locations.Add(linkItem);
 						}
 						else
 						{
-							var linkPath = (string?)item?.Properties["System.Link.TargetParsingPath"];
-							if (linkPath is not null)
+							var linkPath = item.Properties["System.Link.TargetParsingPath"] as string;
+							if (linkPath is not null &&
+								ShellFolderExtensions.GetShellFileItem(item) is { } linkItem)
 							{
-								var linkItem = ShellFolderExtensions.GetShellFileItem(item);
 								locations.Add(new(linkItem) { TargetPath = linkPath });
 							}
 						}

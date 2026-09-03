@@ -1,5 +1,5 @@
-// Copyright (c) Files Community
-// Licensed under the MIT License.
+﻿// Copyright (c) Files Community
+// SPDX-License-Identifier: MPL-2.0
 
 using Microsoft.Extensions.Logging;
 using Windows.ApplicationModel.DataTransfer;

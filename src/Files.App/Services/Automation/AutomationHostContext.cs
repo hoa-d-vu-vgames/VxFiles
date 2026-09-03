@@ -37,10 +37,13 @@ namespace Files.App.Services.Automation
 		}
 
 		private static SelectedPath ToSelectedPath(ListedItem item)
-			=> new(
-				item.ItemPath,
+		{
+			var path = item.GetRequiredPath();
+			return new(
+				path,
 				item.IsFolder ? SelectedPathKind.Folder : SelectedPathKind.File,
-				AutomationSelectionRules.ClassifyLocation(item.ItemPath));
+				AutomationSelectionRules.ClassifyLocation(path));
+		}
 
 		private void Context_PropertyChanged(object? sender, PropertyChangedEventArgs e)
 		{

@@ -76,7 +76,8 @@ namespace Files.App.Services.Automation
 		/// </remarks>
 		private AutomationIntentResult Reveal(string capturedFolderPath, AutomationResultIntent.RevealPaths reveal)
 		{
-			if (_context.ShellPage?.SlimContentPage?.ItemManipulationModel is not { } manipulation)
+			if (_context.ShellPage is not { } shellPage ||
+				shellPage.SlimContentPage?.ItemManipulationModel is not { } manipulation)
 				return new(reveal, AutomationIntentDisposition.Rejected, Strings.AutomationToolsResultNoFolder.GetLocalizedResource());
 
 			// Matched on the full path rather than the display name: Name hides the extension when the user has
@@ -87,8 +88,8 @@ namespace Files.App.Services.Automation
 			if (paths.Count is 0)
 				return new(reveal, AutomationIntentDisposition.Rejected, Strings.AutomationToolsResultOutsideFolder.GetLocalizedResource());
 
-			var items = _context.ShellPage.ShellViewModel.FilesAndFolders
-				.Where(item => paths.Contains(item.ItemPath))
+			var items = shellPage.GetRequiredShellViewModel().FilesAndFolders
+				.Where(item => item.ItemPath is { } path && paths.Contains(path))
 				.ToList();
 			if (items.Count is 0)
 				return new(reveal, AutomationIntentDisposition.Rejected, Strings.AutomationToolsResultNotListed.GetLocalizedResource());
