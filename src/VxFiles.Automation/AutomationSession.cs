@@ -31,9 +31,10 @@ internal sealed class AutomationSession : IAutomationSession
 	private AutomationSnapshot _snapshot;
 	private bool _disposed;
 
-	public AutomationSession(
+	private AutomationSession(
 		AutomationModuleOptions options,
 		AutomationCatalog catalog,
+		ImmutableArray<AutomationPackageSnapshot> packages,
 		IAutomationStateStore stateStore,
 		IAutomationTrustConsent trustConsent,
 		IAutomationResultRouter resultRouter)
@@ -43,11 +44,31 @@ internal sealed class AutomationSession : IAutomationSession
 		_stateStore = stateStore;
 		_trustConsent = trustConsent;
 		_resultRouter = resultRouter;
-		_snapshot = new(1, 1, catalog.Snapshot.Packages, [], []);
+		_snapshot = new(1, 1, packages, [], []);
 		_catalogWatchers = options.PackageRoots
 			.Where(Directory.Exists)
 			.Select(CreateCatalogWatcher)
 			.ToImmutableArray();
+	}
+
+	/// <summary>
+	/// Opens a session over a discovered catalog, with each action's stored settings and readiness already applied.
+	/// </summary>
+	/// <remarks>
+	/// The state read happens before construction rather than after it, because constructing the session starts
+	/// the catalog watchers: a refresh racing an overlay applied afterwards could replace the seeded snapshot with
+	/// one holding defaults.
+	/// </remarks>
+	public static async ValueTask<AutomationSession> CreateAsync(
+		AutomationModuleOptions options,
+		AutomationCatalog catalog,
+		IAutomationStateStore stateStore,
+		IAutomationTrustConsent trustConsent,
+		IAutomationResultRouter resultRouter,
+		CancellationToken cancellationToken = default)
+	{
+		var packages = await AutomationSnapshotMapping.WithStoredStateAsync(stateStore, catalog, cancellationToken);
+		return new(options, catalog, packages, stateStore, trustConsent, resultRouter);
 	}
 
 	public event PropertyChangedEventHandler? PropertyChanged;
@@ -138,6 +159,32 @@ internal sealed class AutomationSession : IAutomationSession
 		return ValueTask.CompletedTask;
 	}
 
+	public async ValueTask ApplyPackageConfigurationAsync(
+		AutomationPackageId packageId,
+		AutomationPackageConfiguration configuration,
+		CancellationToken cancellationToken = default)
+	{
+		ArgumentNullException.ThrowIfNull(configuration);
+		ThrowIfDisposed();
+
+		AutomationPackageDefinition package;
+		lock (_gate)
+		{
+			if (!_catalog.Packages.TryGetValue(packageId, out package!))
+				throw new InvalidOperationException($"Automation Package '{packageId.Value}' is unavailable.");
+		}
+
+		// Everything is screened before anything is written, so a configuration refused on its third entry does
+		// not leave the first two behind for the user to discover later.
+		var stored = await _stateStore.ReadPackageStateAsync(packageId, cancellationToken);
+		var externalTools = AutomationConfigurationRules.ScreenExternalTools(package, stored.ExternalTools, configuration.ExternalTools);
+		var actionSettings = AutomationConfigurationRules.ScreenActionSettings(package, configuration.ActionSettings);
+
+		await _stateStore.WritePackageConfigurationAsync(packageId, externalTools, actionSettings, cancellationToken);
+
+		await RepublishPackageAsync(packageId, cancellationToken);
+	}
+
 	public async ValueTask DisposeAsync()
 	{
 		ImmutableArray<FileSystemWatcher> watchers;
@@ -188,8 +235,9 @@ internal sealed class AutomationSession : IAutomationSession
 		ValidateSelection(action, invocation.Selection);
 		var packageState = await _stateStore.ReadPackageStateAsync(package.Id, cancellationToken);
 		var actionSettings = await _stateStore.ReadActionSettingsAsync(invocation.ActionId, cancellationToken);
-		var dependencies = AutomationDependencyResolver.Resolve(package, action, packageState, actionSettings);
-		var fingerprint = AutomationTrustFingerprint.Compute(package, _options, dependencies.ExternalTools);
+		var dependencies = await AutomationDependencyResolver.ResolveAsync(package, action, packageState, actionSettings);
+		var trustTools = await AutomationDependencyResolver.ResolveConfiguredPackageToolsAsync(package, packageState);
+		var fingerprint = await AutomationTrustFingerprint.ComputeAsync(package, _options, trustTools);
 
 		if (!string.Equals(packageState.TrustedFingerprint, fingerprint.PackageFingerprint, StringComparison.Ordinal))
 		{
@@ -204,7 +252,7 @@ internal sealed class AutomationSession : IAutomationSession
 					invocation.Selection.Items.Length,
 					fingerprint.PackageFingerprint,
 					fingerprint.RunnerFingerprint,
-					dependencies.ExternalTools),
+					trustTools),
 				cancellationToken);
 			if (!accepted)
 				return null;
@@ -212,7 +260,15 @@ internal sealed class AutomationSession : IAutomationSession
 			await _stateStore.WritePackageTrustAsync(package.Id, fingerprint.PackageFingerprint, cancellationToken);
 		}
 
-		var launchFingerprint = AutomationTrustFingerprint.Compute(package, _options, dependencies.ExternalTools);
+		var launchPackageState = await _stateStore.ReadPackageStateAsync(package.Id, cancellationToken);
+		var launchActionSettings = await _stateStore.ReadActionSettingsAsync(invocation.ActionId, cancellationToken);
+		var launchDependencies = await AutomationDependencyResolver.ResolveAsync(
+			package,
+			action,
+			launchPackageState,
+			launchActionSettings);
+		var launchTrustTools = await AutomationDependencyResolver.ResolveConfiguredPackageToolsAsync(package, launchPackageState);
+		var launchFingerprint = await AutomationTrustFingerprint.ComputeAsync(package, _options, launchTrustTools);
 		if (!string.Equals(fingerprint.PackageFingerprint, launchFingerprint.PackageFingerprint, StringComparison.Ordinal))
 			throw new InvalidOperationException("Automation Package content changed after trust approval; review and trust it again.");
 
@@ -229,7 +285,7 @@ internal sealed class AutomationSession : IAutomationSession
 				throw new InvalidOperationException(StaleCatalogMessage);
 		}
 
-		return new(dependencies, launchFingerprint.PackageFingerprint);
+		return new(launchDependencies, launchFingerprint.PackageFingerprint);
 	}
 
 	private async Task ExecuteRunAsync(
@@ -281,6 +337,26 @@ internal sealed class AutomationSession : IAutomationSession
 				control.UserCancellation.Token,
 				control.ShutdownCancellation.Token);
 		}
+		catch (OperationCanceledException) when (control.ShutdownCancellation.IsCancellationRequested)
+		{
+			processResult = new(
+				AutomationRunState.Cancelled,
+				"Cancelled",
+				string.Empty,
+				false,
+				[],
+				"The Automation Action was stopped because its host session closed.");
+		}
+		catch (OperationCanceledException) when (control.UserCancellation.IsCancellationRequested)
+		{
+			processResult = new(
+				AutomationRunState.Cancelled,
+				"Cancelled",
+				string.Empty,
+				false,
+				[],
+				"The Automation Action was cancelled.");
+		}
 		catch (Exception exception)
 		{
 			processResult = AutomationProcessResult.Failed(exception.Message);
@@ -323,6 +399,44 @@ internal sealed class AutomationSession : IAutomationSession
 		await _stateStore.AppendRunRecordAsync(
 			new(terminal, package.PackageVersion, preparation.LaunchFingerprint),
 			CancellationToken.None);
+	}
+
+	/// <summary>
+	/// Republishes one package from the catalog so an applied configuration is visible without a restart.
+	/// </summary>
+	/// <remarks>
+	/// Scoped to the configured package rather than rebuilding every one, so that configuring this package does
+	/// not also rebuild a sibling out of the <see cref="AutomationAvailability.MissingDependency"/> mark a failed
+	/// run left on it. That mark is not durable either way — it lives on the snapshot, and the next catalog
+	/// refresh rebuilds from manifests and drops it — but nothing done here should be what drops it. Clearing
+	/// <em>this</em> package's mark is the point.
+	/// </remarks>
+	private async Task RepublishPackageAsync(AutomationPackageId packageId, CancellationToken cancellationToken)
+	{
+		AutomationCatalog catalog;
+		lock (_gate)
+			catalog = _catalog;
+
+		var discovered = catalog.Snapshot.Packages.FirstOrDefault(item => item.Id == packageId);
+		if (discovered is null)
+			return;
+
+		var rebuilt = await AutomationSnapshotMapping.WithStoredStateAsync(_stateStore, catalog, [discovered], cancellationToken);
+		lock (_gate)
+		{
+			if (_disposed)
+				return;
+
+			var current = _snapshot.Packages.FirstOrDefault(item => item.Id == packageId);
+			if (current is null)
+				return;
+
+			ReplaceSnapshot(_snapshot with
+			{
+				CatalogRevision = _snapshot.CatalogRevision + 1,
+				Packages = _snapshot.Packages.Replace(current, rebuilt[0]),
+			});
+		}
 	}
 
 	private bool IsPackageBusy(AutomationPackageId packageId)
@@ -441,6 +555,7 @@ internal sealed class AutomationSession : IAutomationSession
 		{
 			await Task.Delay(CatalogRefreshDebounce, cancellationToken);
 			var replacement = AutomationManifestCatalog.Discover(_options.CatalogOptions);
+			var packages = await AutomationSnapshotMapping.WithStoredStateAsync(_stateStore, replacement, cancellationToken);
 			lock (_gate)
 			{
 				if (_disposed || cancellationToken.IsCancellationRequested)
@@ -449,7 +564,7 @@ internal sealed class AutomationSession : IAutomationSession
 				ReplaceSnapshot(_snapshot with
 				{
 					CatalogRevision = _snapshot.CatalogRevision + 1,
-					Packages = replacement.Snapshot.Packages,
+					Packages = packages,
 				});
 			}
 		}

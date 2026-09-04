@@ -45,7 +45,8 @@ public sealed class FileAutomationStateStore : IAutomationStateStore
 		await _gate.WaitAsync(cancellationToken);
 		try
 		{
-			return await ReadPackageStateWithoutLockAsync(path, cancellationToken);
+			var state = await ReadStoredPackageStateWithoutLockAsync(path, cancellationToken);
+			return new(state.TrustedFingerprint, state.ExternalTools);
 		}
 		finally
 		{
@@ -64,11 +65,11 @@ public sealed class FileAutomationStateStore : IAutomationStateStore
 		{
 			var path = GetPackageStatePath(packageId);
 			var state = File.Exists(path)
-				? await ReadPackageStateWithoutLockAsync(path, cancellationToken)
-				: EmptyPackageState();
+				? await ReadStoredPackageStateWithoutLockAsync(path, cancellationToken)
+				: EmptyStoredPackageState();
 			await WriteJsonAtomicallyAsync(
 				path,
-				writer => WritePackageState(writer, state with { TrustedFingerprint = fingerprint }),
+				writer => WriteStoredPackageState(writer, state with { TrustedFingerprint = fingerprint }),
 				cancellationToken);
 		}
 		finally
@@ -81,16 +82,45 @@ public sealed class FileAutomationStateStore : IAutomationStateStore
 		AutomationActionId actionId,
 		CancellationToken cancellationToken = default)
 	{
-		var path = GetActionSettingsPath(actionId);
+		var path = GetPackageStatePath(actionId.PackageId);
 		if (!File.Exists(path))
-			return new(ImmutableDictionary<string, AutomationSettingValue>.Empty);
+			return EmptyActionSettings();
 
 		await _gate.WaitAsync(cancellationToken);
 		try
 		{
-			await using var stream = File.OpenRead(path);
-			using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-			return ParseActionSettings(document.RootElement);
+			var state = await ReadStoredPackageStateWithoutLockAsync(path, cancellationToken);
+			return state.ActionSettings.GetValueOrDefault(actionId.LocalId, EmptyActionSettings());
+		}
+		finally
+		{
+			_gate.Release();
+		}
+	}
+
+	public async ValueTask WritePackageConfigurationAsync(
+		AutomationPackageId packageId,
+		ImmutableDictionary<string, AutomationExternalToolConfiguration> externalTools,
+		ImmutableDictionary<AutomationActionLocalId, AutomationActionSettings> actionSettings,
+		CancellationToken cancellationToken = default)
+	{
+		ArgumentNullException.ThrowIfNull(externalTools);
+		ArgumentNullException.ThrowIfNull(actionSettings);
+		await _gate.WaitAsync(cancellationToken);
+		try
+		{
+			var path = GetPackageStatePath(packageId);
+			var state = File.Exists(path)
+				? await ReadStoredPackageStateWithoutLockAsync(path, cancellationToken)
+				: EmptyStoredPackageState();
+			var mergedActionSettings = state.ActionSettings.SetItems(actionSettings);
+
+			await WriteJsonAtomicallyAsync(
+				path,
+				writer => WriteStoredPackageState(
+					writer,
+					state with { ExternalTools = externalTools, ActionSettings = mergedActionSettings }),
+				cancellationToken);
 		}
 		finally
 		{
@@ -119,22 +149,23 @@ public sealed class FileAutomationStateStore : IAutomationStateStore
 		}
 	}
 
-	private static async ValueTask<AutomationPackageState> ReadPackageStateWithoutLockAsync(
+	private static async ValueTask<StoredPackageState> ReadStoredPackageStateWithoutLockAsync(
 		string path,
 		CancellationToken cancellationToken)
 	{
 		await using var stream = File.OpenRead(path);
 		using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-		return ParsePackageState(document.RootElement);
+		return ParseStoredPackageState(document.RootElement);
 	}
 
-	private static AutomationPackageState ParsePackageState(JsonElement root)
+	private static StoredPackageState ParseStoredPackageState(JsonElement root)
 	{
 		if (root.ValueKind is not JsonValueKind.Object)
 			throw new InvalidDataException("Automation package state must be a JSON object.");
 
 		string? trustedFingerprint = null;
 		var tools = ImmutableDictionary.CreateBuilder<string, AutomationExternalToolConfiguration>(StringComparer.Ordinal);
+		var actionSettings = ImmutableDictionary.CreateBuilder<AutomationActionLocalId, AutomationActionSettings>();
 		foreach (var property in root.EnumerateObject())
 		{
 			switch (property.Name)
@@ -146,12 +177,16 @@ public sealed class FileAutomationStateStore : IAutomationStateStore
 					foreach (var tool in property.Value.EnumerateObject())
 						tools.Add(tool.Name, new(tool.Name, tool.Value.GetString() ?? string.Empty));
 					break;
+				case "actionSettings":
+					foreach (var action in property.Value.EnumerateObject())
+						actionSettings.Add(AutomationActionLocalId.Parse(action.Name), ParseActionSettings(action.Value));
+					break;
 				default:
 					throw new InvalidDataException($"Unknown automation package state property '{property.Name}'.");
 			}
 		}
 
-		return new(trustedFingerprint, tools.ToImmutable());
+		return new(trustedFingerprint, tools.ToImmutable(), actionSettings.ToImmutable());
 	}
 
 	private static AutomationActionSettings ParseActionSettings(JsonElement root)
@@ -206,7 +241,7 @@ public sealed class FileAutomationStateStore : IAutomationStateStore
 		}
 	}
 
-	private static void WritePackageState(Utf8JsonWriter writer, AutomationPackageState state)
+	private static void WriteStoredPackageState(Utf8JsonWriter writer, StoredPackageState state)
 	{
 		writer.WriteStartObject();
 		if (state.TrustedFingerprint is null)
@@ -216,6 +251,32 @@ public sealed class FileAutomationStateStore : IAutomationStateStore
 		writer.WriteStartObject("externalTools");
 		foreach (var tool in state.ExternalTools.OrderBy(item => item.Key, StringComparer.Ordinal))
 			writer.WriteString(tool.Key, tool.Value.ExecutablePath);
+		writer.WriteEndObject();
+		writer.WriteStartObject("actionSettings");
+		foreach (var (localId, settings) in state.ActionSettings.OrderBy(item => item.Key.Value, StringComparer.Ordinal))
+		{
+			writer.WritePropertyName(localId.Value);
+			WriteActionSettings(writer, settings);
+		}
+
+		writer.WriteEndObject();
+		writer.WriteEndObject();
+	}
+
+	/// <summary>
+	/// Writes settings in the shape <see cref="ParseActionSettings"/> reads, ordered so that saving the same
+	/// configuration twice produces the same bytes.
+	/// </summary>
+	private static void WriteActionSettings(Utf8JsonWriter writer, AutomationActionSettings settings)
+	{
+		writer.WriteStartObject();
+		writer.WriteStartObject("settings");
+		foreach (var (key, value) in settings.Values.OrderBy(setting => setting.Key, StringComparer.Ordinal))
+		{
+			writer.WritePropertyName(key);
+			AutomationSettingValueJson.Write(writer, value);
+		}
+
 		writer.WriteEndObject();
 		writer.WriteEndObject();
 	}
@@ -285,13 +346,6 @@ public sealed class FileAutomationStateStore : IAutomationStateStore
 	private string GetPackageStatePath(AutomationPackageId packageId)
 		=> Path.Join(_stateRoot, "packages", RequireFileNameSafe(packageId.Value) + ".json");
 
-	private string GetActionSettingsPath(AutomationActionId actionId)
-		=> Path.Join(
-			_stateRoot,
-			"actions",
-			RequireFileNameSafe(actionId.PackageId.Value),
-			RequireFileNameSafe(actionId.LocalId.Value) + ".json");
-
 	private static string RequireFileNameSafe(string value)
 	{
 		if (string.IsNullOrWhiteSpace(value) || value.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
@@ -301,4 +355,18 @@ public sealed class FileAutomationStateStore : IAutomationStateStore
 
 	private static AutomationPackageState EmptyPackageState()
 		=> new(null, ImmutableDictionary<string, AutomationExternalToolConfiguration>.Empty);
+
+	private static StoredPackageState EmptyStoredPackageState()
+		=> new(
+			null,
+			ImmutableDictionary<string, AutomationExternalToolConfiguration>.Empty,
+			ImmutableDictionary<AutomationActionLocalId, AutomationActionSettings>.Empty);
+
+	private static AutomationActionSettings EmptyActionSettings()
+		=> new(ImmutableDictionary<string, AutomationSettingValue>.Empty);
+
+	private sealed record StoredPackageState(
+		string? TrustedFingerprint,
+		ImmutableDictionary<string, AutomationExternalToolConfiguration> ExternalTools,
+		ImmutableDictionary<AutomationActionLocalId, AutomationActionSettings> ActionSettings);
 }

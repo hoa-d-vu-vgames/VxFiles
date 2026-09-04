@@ -18,17 +18,39 @@ namespace Files.App.Data.Items
 
 		private bool _isExpanded;
 
-		public AutomationPackageItem(AutomationPackageSnapshot snapshot, Func<AutomationActionItem, Task> run)
+		private readonly Func<AutomationPackageItem, Task> _configure;
+
+		public AutomationPackageItem(
+			AutomationPackageSnapshot snapshot,
+			Func<AutomationActionItem, Task> run,
+			Func<AutomationPackageItem, Task> configure)
 		{
 			ArgumentNullException.ThrowIfNull(snapshot);
 			ArgumentNullException.ThrowIfNull(run);
+			ArgumentNullException.ThrowIfNull(configure);
 
 			_snapshot = snapshot;
 			_run = run;
+			_configure = configure;
 			Diagnostics = string.Join(Environment.NewLine, snapshot.Diagnostics);
 			HealthLabel = DescribeHealth(snapshot);
 			ShowActions(snapshot.Actions);
 		}
+
+		/// <summary>
+		/// Gets whether this package has anything to configure at all.
+		/// </summary>
+		/// <remarks>
+		/// Enabled whenever the package declares a program or a setting — including, and especially, while it reads
+		/// <see cref="AutomationAvailability.NeedsConfiguration"/>, since the dialog is the only way out of that
+		/// state. It is off only for a package with nothing to set, which is what VxFiles Tracer shows.
+		/// </remarks>
+		public bool CanConfigure
+			=> !_snapshot.ExternalTools.IsEmpty ||
+				_snapshot.Actions.Any(action => !action.Settings.IsEmpty);
+
+		[RelayCommand(CanExecute = nameof(CanConfigure))]
+		private Task ConfigureAsync() => _configure(this);
 
 		/// <summary>
 		/// Gets the catalog snapshot this row was built from, including the actions a filter is hiding.
@@ -80,12 +102,23 @@ namespace Files.App.Data.Items
 		/// Always counts every action the package declares, so filtering out healthy siblings cannot make a
 		/// package look broken.
 		/// </summary>
+		/// <remarks>
+		/// A package that is short of some of its actions but not all of them is described by the count rather
+		/// than by its own verdict. One action needing configuration makes the whole package need it, and
+		/// "Needs configuration" over a package whose other three actions run reads as though none of them did —
+		/// the row beneath gives the reason, and the count is what the root is for.
+		/// </remarks>
 		private static string DescribeHealth(AutomationPackageSnapshot snapshot)
 		{
-			if (snapshot.Availability is not AutomationAvailability.Available)
+			// Neither is about individual actions: a package that failed validation declares none that survived,
+			// and a run that could not resolve a dependency says nothing about which actions needed it.
+			if (snapshot.Availability is AutomationAvailability.Disabled or AutomationAvailability.MissingDependency)
 				return snapshot.Availability.ToLabel();
 
 			var available = snapshot.Actions.Count(action => action.Availability is AutomationAvailability.Available);
+			if (available is 0 && snapshot.Availability is AutomationAvailability.NeedsConfiguration)
+				return snapshot.Availability.ToLabel();
+
 			if (available == snapshot.Actions.Length)
 				return AutomationAvailability.Available.ToLabel();
 

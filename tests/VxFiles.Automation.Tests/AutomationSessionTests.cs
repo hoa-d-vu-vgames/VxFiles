@@ -73,7 +73,7 @@ public sealed class AutomationSessionTests
 		var stale = fixture.Invocation(session, "hoa.media/convert");
 
 		fixture.UpdateFile("media", "convert.py", "print('changed')");
-		await WaitForCatalogRevisionAsync(session, stale.CatalogRevision + 1);
+		await AutomationFixture.WaitForCatalogRevisionAsync(session, stale.CatalogRevision + 1);
 
 		var exception = await Assert.ThrowsExactlyAsync<InvalidOperationException>(
 			() => session.InvokeAsync(stale).AsTask());
@@ -155,7 +155,7 @@ public sealed class AutomationSessionTests
 
 		var revision = session.Snapshot.CatalogRevision;
 		fixture.UpdateFile("media", "thumbnails.py", "print('changed')");
-		await WaitForCatalogRevisionAsync(session, revision + 1);
+		await AutomationFixture.WaitForCatalogRevisionAsync(session, revision + 1);
 		await session.InvokeAsync(fixture.Invocation(session, "hoa.media/convert"));
 
 		Assert.AreEqual(2, trust.RequestCount);
@@ -193,7 +193,7 @@ public sealed class AutomationSessionTests
 
 		async Task InvokeOnceAsync()
 		{
-			await using IAutomationSession session = new AutomationSession(
+			await using IAutomationSession session = await AutomationSession.CreateAsync(
 				fixture.Options,
 				AutomationManifestCatalog.Discover(fixture.Options.CatalogOptions),
 				store,
@@ -475,14 +475,43 @@ public sealed class AutomationSessionTests
 	public async Task Argv_paths_are_exact_and_oversized_command_lines_fail_before_launch()
 	{
 		using var fixture = AutomationFixture.Create();
+		var setting = """
+
+			  "settings": [
+			    {
+			      "key": "quality",
+			      "displayName": "Quality",
+			      "description": "Encoding quality",
+			      "type": "integer",
+			      "default": 20,
+			      "minimum": 0,
+			      "maximum": 51
+			    }
+			  ],
+			""";
 		fixture.AddPackage(
 			"media",
 			AutomationManifests.Package(
 				AutomationManifests.DefaultPackageId,
-				AutomationManifests.Action("convert", "convert.py", inputMode: "argv-paths", outputProtocol: "exit-code")),
-			("convert.py", "import json, sys; print(json.dumps(sys.argv[1:], ensure_ascii=False))"));
+				AutomationManifests.Action(
+					"convert",
+					"convert.py",
+					inputMode: "argv-paths",
+					outputProtocol: "exit-code",
+					extraProperties: setting)),
+			("convert.py", """
+				import json, sys
+				from vxfiles_automation import load_request
+				request = load_request()
+				print(json.dumps({"paths": sys.argv[1:], "quality": request["settings"]["quality"]}, ensure_ascii=False))
+				"""));
+		var store = new MemoryStateStore();
+		store.ConfigureSettings(
+			"hoa.media/convert",
+			ImmutableDictionary<string, AutomationSettingValue>.Empty
+				.Add("quality", new(AutomationSettingValueKind.Integer, IntegerValue: 33)));
 		await using var session = await AutomationModule.OpenAsync(
-			fixture.Options, new MemoryStateStore(), new AcceptingTrustConsent(), new RecordingResultRouter());
+			fixture.Options, store, new AcceptingTrustConsent(), new RecordingResultRouter());
 		var selectedPaths = new[]
 		{
 			fixture.AddSelectedFile("space name.mov"),
@@ -493,7 +522,11 @@ public sealed class AutomationSessionTests
 
 		var run = session.Snapshot.RecentRuns[0];
 		Assert.AreEqual(AutomationRunState.Succeeded, run.State, run.Failure + Environment.NewLine + run.StandardError);
-		CollectionAssert.AreEqual(selectedPaths, JsonSerializer.Deserialize<string[]>(run.Logs[0].Message)!);
+		using var request = JsonDocument.Parse(run.Logs[0].Message);
+		CollectionAssert.AreEqual(
+			selectedPaths,
+			request.RootElement.GetProperty("paths").EnumerateArray().Select(item => item.GetString()).ToArray());
+		Assert.AreEqual(33, request.RootElement.GetProperty("quality").GetInt32());
 
 		var oversizedPath = "C:\\" + new string('a', 30_000) + ".mov";
 		await session.InvokeAsync(fixture.Invocation(session, "hoa.media/convert", 2, oversizedPath));
@@ -642,7 +675,7 @@ public sealed class AutomationSessionTests
 	}
 
 	[TestMethod]
-	public async Task Package_trust_and_action_settings_persist_in_separate_files()
+	public async Task Package_trust_persists_without_creating_phantom_action_settings()
 	{
 		using var fixture = AutomationFixture.Create();
 		var store = new FileAutomationStateStore(fixture.Options.StateRoot);
@@ -740,16 +773,4 @@ public sealed class AutomationSessionTests
 		}
 	}
 
-	private static async Task WaitForCatalogRevisionAsync(IAutomationSession session, long minimumRevision)
-	{
-		var deadline = DateTime.UtcNow.AddSeconds(15);
-		while (DateTime.UtcNow < deadline)
-		{
-			if (session.Snapshot.CatalogRevision >= minimumRevision)
-				return;
-			await Task.Delay(10);
-		}
-
-		throw new AssertFailedException($"Expected Automation catalog revision {minimumRevision}.");
-	}
 }

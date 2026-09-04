@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using CommunityToolkit.WinUI;
+using Files.App.Dialogs;
 using Microsoft.Extensions.Logging;
 using System.Collections.Immutable;
 using VxFiles.Automation.Abstractions;
@@ -231,6 +232,27 @@ namespace Files.App.ViewModels.UserControls
 			}
 		}
 
+		/// <summary>
+		/// Opens the Configure dialog for one package and applies what the user saved.
+		/// </summary>
+		/// <remarks>
+		/// The dialog is handed the snapshot the row was built from and one delegate to apply, so it neither reads
+		/// state nor holds the session. Everything the applied configuration changes arrives back the ordinary way,
+		/// through the snapshot the session republishes.
+		/// </remarks>
+		private async Task ConfigurePackageAsync(AutomationPackageItem item)
+		{
+			if (_session is not { } session)
+				return;
+
+			RunFailure = string.Empty;
+
+			var dialog = new AutomationConfigureDialog();
+			await dialog.ShowAsync(
+				item.Snapshot,
+				configuration => session.ApplyPackageConfigurationAsync(item.Snapshot.Id, configuration).AsTask());
+		}
+
 		private Task CancelRunAsync(AutomationRunId runId)
 		{
 			if (_session is not { } session)
@@ -297,7 +319,7 @@ namespace Files.App.ViewModels.UserControls
 
 			foreach (var package in snapshot.Packages)
 			{
-				var item = new AutomationPackageItem(package, RunActionAsync);
+				var item = new AutomationPackageItem(package, RunActionAsync, ConfigurePackageAsync);
 				if (expansion.TryGetValue(item.Id, out var wasExpanded))
 					item.IsExpanded = wasExpanded;
 
@@ -389,7 +411,7 @@ namespace Files.App.ViewModels.UserControls
 
 		private static AutomationActionRunState Evaluate(AutomationActionItem action, RunAvailabilityContext context)
 		{
-			if (action.Snapshot.Availability is not AutomationAvailability.Available ||
+			if (action.Snapshot.Availability is not (AutomationAvailability.Available or AutomationAvailability.NeedsConfiguration) ||
 				action.Snapshot.Selection is not { } policy)
 			{
 				return AutomationActionRunState.Unavailable;
@@ -397,6 +419,13 @@ namespace Files.App.ViewModels.UserControls
 
 			if (context.Snapshot.ActiveRuns.Any(run => run.ActionId == action.Snapshot.Id))
 				return AutomationActionRunState.Running;
+
+			// Ahead of everything the current folder and selection decide, because it is the one reason a row can
+			// give that the user can act on from here, and it should not be hidden behind "wait for the running
+			// action" or "open a folder". Behind Running only, so a tool deleted mid-run does not relabel the row
+			// that is still going.
+			if (action.Snapshot.Availability is AutomationAvailability.NeedsConfiguration)
+				return AutomationActionRunState.NeedsConfiguration;
 
 			if (context.PackageBusy || context.OccupiedSlots >= AutomationLimits.MaximumConcurrentRuns)
 				return AutomationActionRunState.Busy;

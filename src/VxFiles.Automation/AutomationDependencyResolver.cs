@@ -4,7 +4,6 @@
 using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Security.Cryptography;
-using System.Security.Cryptography.X509Certificates;
 using VxFiles.Automation.Abstractions;
 
 namespace VxFiles.Automation;
@@ -24,7 +23,7 @@ internal sealed class AutomationMissingDependencyException(string message) : Inv
 /// </summary>
 internal static class AutomationDependencyResolver
 {
-	public static ResolvedAutomationDependencies Resolve(
+	public static async ValueTask<ResolvedAutomationDependencies> ResolveAsync(
 		AutomationPackageDefinition package,
 		AutomationActionDefinition action,
 		AutomationPackageState packageState,
@@ -33,85 +32,109 @@ internal static class AutomationDependencyResolver
 		var settings = ImmutableDictionary.CreateBuilder<string, AutomationSettingValue>(StringComparer.Ordinal);
 		foreach (var definition in action.Settings)
 		{
-			var value = actionSettings.Values.GetValueOrDefault(definition.Key, definition.DefaultValue);
-			ValidateSetting(definition, value);
-			settings.Add(definition.Key, value);
+			var value = AutomationSettingRules.Current(actionSettings.Values, definition.Key, definition.Type, definition.DefaultValue);
+			if (!AutomationSettingRules.TryResolve(definition, value, out var resolved))
+				throw new InvalidOperationException($"Configured setting '{definition.Key}' is invalid; configure the action again.");
+			settings.Add(definition.Key, resolved);
 		}
 
 		var tools = ImmutableArray.CreateBuilder<AutomationExternalToolIdentity>();
 		foreach (var toolId in action.ExternalToolIds)
 		{
-			var definition = package.ExternalTools.First(tool => string.Equals(tool.Id, toolId, StringComparison.Ordinal));
-			tools.Add(ResolveExternalTool(definition, packageState));
+			// A reference no declaration answers is refused when the manifest is read, so this cannot miss.
+			var definition = package.FindExternalTool(toolId)!;
+			tools.Add(await ResolveExternalToolAsync(definition, packageState));
 		}
 
 		return new(settings.ToImmutable(), tools.ToImmutable());
 	}
 
-	private static AutomationExternalToolIdentity ResolveExternalTool(
+	/// <summary>
+	/// Resolves every currently usable configured tool in the package for its package-wide trust fingerprint.
+	/// An unrelated unconfigured or broken tool does not prevent an otherwise ready action from running.
+	/// </summary>
+	public static async ValueTask<ImmutableArray<AutomationExternalToolIdentity>> ResolveConfiguredPackageToolsAsync(
+		AutomationPackageDefinition package,
+		AutomationPackageState packageState)
+	{
+		var tools = ImmutableArray.CreateBuilder<AutomationExternalToolIdentity>();
+		foreach (var definition in package.ExternalTools)
+		{
+			if (!packageState.ExternalTools.ContainsKey(definition.Id))
+				continue;
+
+			try
+			{
+				tools.Add(await ResolveExternalToolAsync(definition, packageState));
+			}
+			catch (AutomationMissingDependencyException)
+			{
+				// Readiness remains per action. If this tool becomes usable, its identity enters the next
+				// package fingerprint and renews trust before any action can run it.
+			}
+		}
+
+		return tools.ToImmutable();
+	}
+
+	private static async ValueTask<AutomationExternalToolIdentity> ResolveExternalToolAsync(
 		AutomationExternalToolDefinition definition,
 		AutomationPackageState packageState)
 	{
 		if (!packageState.ExternalTools.TryGetValue(definition.Id, out var configuration))
 			throw new AutomationMissingDependencyException($"Configure the required external tool '{definition.DisplayName}'.");
 
-		var path = Path.GetFullPath(configuration.ExecutablePath);
-		if (!Path.IsPathFullyQualified(configuration.ExecutablePath) ||
-			!string.Equals(Path.GetExtension(path), ".exe", StringComparison.OrdinalIgnoreCase) ||
-			!File.Exists(path) ||
-			(File.GetAttributes(path) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
-		{
-			throw new AutomationMissingDependencyException($"Configure '{definition.DisplayName}' with an absolute ordinary executable path.");
-		}
-
+		var path = RequireUsablePath(definition.DisplayName, configuration.ExecutablePath);
 		var version = FileVersionInfo.GetVersionInfo(path).FileVersion;
-		if (definition.MinimumFileVersion is not null &&
-			Version.TryParse(definition.MinimumFileVersion, out var minimum) &&
-			Version.TryParse(version, out var actual) && actual < minimum)
+		if (definition.MinimumFileVersion is not null)
 		{
-			throw new AutomationMissingDependencyException($"Configure '{definition.DisplayName}' version {definition.MinimumFileVersion} or later.");
+			// Fails closed on both sides. FFmpeg's own Windows builds carry no version resource at all, and
+			// reading that silence as a pass handed the manifest author a guarantee nothing ever enforced. The
+			// declared floor is never parsed when the manifest is read, so it can be unusable in the same way.
+			if (!Version.TryParse(definition.MinimumFileVersion, out var minimum))
+				throw new AutomationMissingDependencyException($"'{definition.DisplayName}' cannot be used: its package requires version '{definition.MinimumFileVersion}', which is not a version number.");
+			if (!Version.TryParse(version, out var actual))
+				throw new AutomationMissingDependencyException($"Configure '{definition.DisplayName}' with a build that reports its file version; version {definition.MinimumFileVersion} or later is required.");
+			if (actual < minimum)
+				throw new AutomationMissingDependencyException($"Configure '{definition.DisplayName}' version {definition.MinimumFileVersion} or later.");
 		}
 
 		return new(
 			definition.Id,
 			path,
-			$"sha256:{Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path)))}",
-			version,
-			GetSignatureStatus(path));
+			$"sha256:{await AutomationFileHash.ComputeHexAsync(path)}",
+			version);
 	}
 
-	private static void ValidateSetting(AutomationSettingDefinition definition, AutomationSettingValue value)
+	/// <summary>
+	/// Returns what a configured path leads to, or refuses it with the reason it cannot be run.
+	/// </summary>
+	/// <remarks>
+	/// Shared by the run path and by applying a configuration, so a path a run would refuse is never stored. It
+	/// holds a link's target rather than the link, resolved on every run: winget and scoop put their executables
+	/// behind a shim, which is how most people have FFmpeg, and resolving per run is what keeps such an install
+	/// configured across an upgrade that re-points the shim. Package and runtime trees are held to the opposite
+	/// rule — see <see cref="AutomationTrustFingerprint"/> — because those are content VxFiles hashes wholesale,
+	/// not one file the user chose.
+	/// </remarks>
+	public static string RequireUsablePath(string displayName, string executablePath)
 	{
-		var valid = definition.Type switch
+		var evaluation = AutomationExternalToolPathRules.Evaluate(executablePath);
+		return evaluation.Verdict switch
 		{
-			"boolean" => value.Kind is AutomationSettingValueKind.Boolean,
-			"integer" => value.Kind is AutomationSettingValueKind.Integer &&
-				(definition.Minimum is null || value.IntegerValue >= definition.Minimum) &&
-				(definition.Maximum is null || value.IntegerValue <= definition.Maximum),
-			"number" => value.Kind is AutomationSettingValueKind.Number && double.IsFinite(value.NumberValue) &&
-				(definition.Minimum is null || value.NumberValue >= definition.Minimum) &&
-				(definition.Maximum is null || value.NumberValue <= definition.Maximum),
-			"string" or "filePath" or "folderPath" => value.Kind is AutomationSettingValueKind.String && value.StringValue is not null &&
-				(definition.MinimumLength is null || value.StringValue.Length >= definition.MinimumLength) &&
-				(definition.MaximumLength is null || value.StringValue.Length <= definition.MaximumLength),
-			"enum" => value.Kind is AutomationSettingValueKind.String && value.StringValue is not null &&
-				definition.Values.Contains(value.StringValue, StringComparer.Ordinal),
-			_ => false,
+			AutomationToolPathVerdict.Valid => evaluation.EffectivePath,
+			AutomationToolPathVerdict.NotAbsolute or AutomationToolPathVerdict.Malformed or
+				AutomationToolPathVerdict.NotAnExecutable or AutomationToolPathVerdict.NotFound
+				=> throw new AutomationMissingDependencyException(
+					$"Configure '{displayName}' with an absolute ordinary executable path."),
+			AutomationToolPathVerdict.Unresolvable => throw new AutomationMissingDependencyException(
+				$"Configure '{displayName}' with an executable path that resolves."),
+			AutomationToolPathVerdict.TargetNotFound => throw new AutomationMissingDependencyException(
+				$"Configure '{displayName}': its path leads to '{evaluation.EffectivePath}', which is not there. Reinstall it or configure the new location."),
+			AutomationToolPathVerdict.TargetNotAnExecutable => throw new AutomationMissingDependencyException(
+				$"Configure '{displayName}' with a path that leads to a program; this one leads to '{Path.GetFileName(evaluation.EffectivePath)}'."),
+			_ => throw new AutomationMissingDependencyException(
+				$"Configure '{displayName}': its path cannot be used."),
 		};
-		if (!valid)
-			throw new InvalidOperationException($"Configured setting '{definition.Key}' is invalid; configure the action again.");
-	}
-
-	private static string GetSignatureStatus(string path)
-	{
-		try
-		{
-			using var certificate = X509CertificateLoader.LoadCertificateFromFile(path);
-			return certificate is null ? "unsigned" : "signed";
-		}
-		catch (CryptographicException)
-		{
-			return "unsigned";
-		}
 	}
 }

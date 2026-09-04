@@ -111,6 +111,7 @@ public sealed class AutomationCatalogFilterTests
 			null,
 			AutomationAvailability.Available,
 			[],
+			[],
 			[.. actions]);
 
 	private static AutomationActionSnapshot Action(
@@ -123,5 +124,6 @@ public sealed class AutomationCatalogFilterTests
 			description,
 			null,
 			AutomationAvailability.Available,
+			[],
 			[]);
 }

@@ -37,7 +37,7 @@ public static class AutomationModule
 			cancellationToken);
 	}
 
-	public static ValueTask<IAutomationSession> OpenAsync(
+	public static async ValueTask<IAutomationSession> OpenAsync(
 		AutomationModuleOptions options,
 		IAutomationStateStore stateStore,
 		IAutomationTrustConsent trustConsent,
@@ -51,12 +51,12 @@ public static class AutomationModule
 		cancellationToken.ThrowIfCancellationRequested();
 		PinnedAutomationPython.Validate(options);
 
-		IAutomationSession session = new AutomationSession(
+		return await AutomationSession.CreateAsync(
 			options,
 			AutomationManifestCatalog.Discover(options.CatalogOptions),
 			stateStore,
 			trustConsent,
-			resultRouter);
-		return ValueTask.FromResult(session);
+			resultRouter,
+			cancellationToken);
 	}
 }

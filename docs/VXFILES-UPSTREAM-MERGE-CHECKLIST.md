@@ -145,7 +145,7 @@ V1 deliberately omits or disables:
 - packaged launcher replacement and default-file-manager registration;
 - package-dependent shell integration shown on Advanced settings;
 - Start menu pinning. `PinToStartAction` and `UnpinFromStartAction` report `IsExecutable` false, so both context-menu entries stay visible but disabled and the commands do nothing from the palette or a hotkey;
-- per-action settings and external-tool configuration. Automation Actions run from the Tools tab, but an action that declares settings or an external tool gets whatever the state store already holds; there is no UI to change it yet.
+- automatic discovery or installation of third-party programs used by Automation Actions. Users configure those paths explicitly from the package's Configure dialog.
 
 When upstream changes one of these areas, merge the source when harmless but keep its entry point hidden, disabled, guarded, or excluded from the V1 build until an unpackaged implementation is explicitly approved.
 

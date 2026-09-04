@@ -136,6 +136,23 @@ internal sealed class AutomationFixture : IDisposable
 				[.. items.Select(path => new SelectedPath(path, SelectedPathKind.File, SelectedLocationKind.Local))]));
 	}
 
+	/// <summary>
+	/// Blocks until the session has taken up a catalog change, which arrives through a debounced file watcher
+	/// rather than on the calling thread.
+	/// </summary>
+	public static async Task WaitForCatalogRevisionAsync(IAutomationSession session, long minimumRevision)
+	{
+		var deadline = DateTime.UtcNow.AddSeconds(15);
+		while (DateTime.UtcNow < deadline)
+		{
+			if (session.Snapshot.CatalogRevision >= minimumRevision)
+				return;
+			await Task.Delay(10);
+		}
+
+		throw new AssertFailedException($"Expected Automation catalog revision {minimumRevision}.");
+	}
+
 	public static AutomationActionId ParseActionId(string value)
 	{
 		var separator = value.LastIndexOf('/');
@@ -176,6 +193,31 @@ internal sealed class AutomationFixture : IDisposable
 	}
 }
 
+internal static class TestLinks
+{
+	/// <summary>
+	/// Creates a symbolic link, or reports the test inconclusive where the privilege to create one is absent.
+	/// </summary>
+	/// <remarks>
+	/// Creating one needs Developer Mode or elevation, which a plain developer account has neither of. Every
+	/// test that reaches for a link is therefore skippable, and <c>docs/VXFILES-RELEASE.md</c> names them so a
+	/// release gate can tell an expected skip from a runtime that was never acquired.
+	/// </remarks>
+	public static string Create(string path, string target)
+	{
+		try
+		{
+			File.CreateSymbolicLink(path, target);
+		}
+		catch (Exception exception) when (exception is UnauthorizedAccessException or IOException)
+		{
+			Assert.Inconclusive($"Symbolic links are unavailable in this test environment: {exception.Message}");
+		}
+
+		return path;
+	}
+}
+
 /// <summary>
 /// Builds <c>vxpackage.json</c> text for multi-action packages.
 /// </summary>
@@ -184,6 +226,12 @@ internal static class AutomationManifests
 	public const string DefaultPackageId = "hoa.media";
 
 	public static string Package(string packageId, params string[] actions)
+		=> PackageWith(packageId, string.Empty, actions);
+
+	/// <param name="extraProperties">
+	/// Package-level JSON spliced in after <c>author</c>, each line ending in its own comma.
+	/// </param>
+	public static string PackageWith(string packageId, string extraProperties, params string[] actions)
 		=> $$"""
 		{
 		  "schemaVersion": 1,
@@ -191,7 +239,7 @@ internal static class AutomationManifests
 		  "packageVersion": "1.0.0",
 		  "displayName": "Media tools",
 		  "description": "Media utilities",
-		  "author": "Hoa",
+		  "author": "Hoa",{{extraProperties}}
 		  "minimumHostVersion": "2.1.0",
 		  "python": { "requires": ">=3.14,<3.15" },
 		  "actions": [
@@ -255,6 +303,19 @@ internal sealed class MemoryStateStore : IAutomationStateStore
 		return ValueTask.CompletedTask;
 	}
 
+	public ValueTask WritePackageConfigurationAsync(
+		AutomationPackageId packageId,
+		ImmutableDictionary<string, AutomationExternalToolConfiguration> externalTools,
+		ImmutableDictionary<AutomationActionLocalId, AutomationActionSettings> actionSettings,
+		CancellationToken cancellationToken = default)
+	{
+		_packages[packageId.Value] = ReadPackage(packageId.Value) with { ExternalTools = externalTools };
+		foreach (var (localId, settings) in actionSettings)
+			_actions[new AutomationActionId(packageId, localId).Value] = settings;
+
+		return ValueTask.CompletedTask;
+	}
+
 	public ValueTask<AutomationActionSettings> ReadActionSettingsAsync(
 		AutomationActionId actionId,
 		CancellationToken cancellationToken = default)
@@ -267,6 +328,9 @@ internal sealed class MemoryStateStore : IAutomationStateStore
 		Records.Add(record);
 		return ValueTask.CompletedTask;
 	}
+
+	public ImmutableDictionary<string, AutomationExternalToolConfiguration> ExternalToolsFor(string packageId)
+		=> ReadPackage(packageId).ExternalTools;
 
 	private AutomationPackageState ReadPackage(string packageId)
 		=> _packages.TryGetValue(packageId, out var state)
@@ -317,6 +381,13 @@ internal sealed class BlockingStateStore : IAutomationStateStore
 	public ValueTask WritePackageTrustAsync(
 		AutomationPackageId packageId,
 		string fingerprint,
+		CancellationToken cancellationToken = default)
+		=> ValueTask.CompletedTask;
+
+	public ValueTask WritePackageConfigurationAsync(
+		AutomationPackageId packageId,
+		ImmutableDictionary<string, AutomationExternalToolConfiguration> externalTools,
+		ImmutableDictionary<AutomationActionLocalId, AutomationActionSettings> actionSettings,
 		CancellationToken cancellationToken = default)
 		=> ValueTask.CompletedTask;
 

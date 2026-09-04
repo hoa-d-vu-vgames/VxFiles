@@ -54,6 +54,7 @@ The external interface should expose only:
 Snapshot
 InvokeAsync(invocation)
 CancelAsync(runId)
+ApplyPackageConfigurationAsync(packageId, configuration)
 ```
 
 The archived names `IAutomationBarSession` and `AutomationBarSnapshot` leak the deleted horizontal-bar presentation. Rename them to `IAutomationSession` and `AutomationSnapshot` while recovering the projects. The implementation remains headless and has no dependency on WinUI or Files browsing models.
@@ -130,6 +131,10 @@ Each action contains:
 - `json-stdin` or exact `argv-paths` input;
 - `ndjson-v1` or exit-code output;
 - optional action-specific typed settings and references to package external tools.
+
+Every run also receives the same immutable JSON request at the path in
+`VXFILES_AUTOMATION_REQUEST`. `json-stdin` receives those bytes on standard input; `argv-paths`
+keeps its argument list to selected paths only and reads settings or resolved program identities from that file.
 
 The stable executable identity is the composite `<package-id>/<action-id>`. The headless snapshot preserves the hierarchy as package snapshots containing action snapshots so callers do not rebuild domain relationships.
 

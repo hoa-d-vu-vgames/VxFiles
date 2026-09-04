@@ -9,8 +9,9 @@ namespace Files.App.Data.Enums
 	/// </summary>
 	/// <remarks>
 	/// This is a host concept, not a catalog one. <c>AutomationAvailability</c> answers "did this action survive
-	/// validation?", which does not move as the user navigates; everything below except
-	/// <see cref="Unavailable"/> depends on what is open and selected at this moment.
+	/// validation, and can it reach what it needs?", which does not move as the user navigates; everything below
+	/// except <see cref="Unavailable"/> and <see cref="NeedsConfiguration"/> depends on what is open and selected
+	/// at this moment.
 	/// </remarks>
 	public enum AutomationActionRunState
 	{
@@ -28,6 +29,12 @@ namespace Files.App.Data.Enums
 		/// The action did not survive validation, or a dependency it needs is missing.
 		/// </summary>
 		Unavailable,
+
+		/// <summary>
+		/// An external tool this action needs has not been pointed at yet, or no longer leads to a program. The
+		/// user can fix this, which is what separates it from <see cref="Unavailable"/>.
+		/// </summary>
+		NeedsConfiguration,
 
 		/// <summary>
 		/// No filesystem folder is open — Home, search results, and shell locations have nothing to run against.

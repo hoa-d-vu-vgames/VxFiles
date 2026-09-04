@@ -33,7 +33,13 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 
 It sets `VXFILES_AUTOMATION_REQUIRE_RUNTIME=1`, so a missing runtime fails the run instead of skipping every real-process test and still reporting success. VxFiles itself is never launched.
 
-`Discover_disables_package_containing_reparse_point` skips on an account without the symbolic-link privilege. That is the only expected skip; any other skip means the runtime was not acquired.
+Tests that create a symbolic link skip on an account without the privilege to create one, which needs Developer Mode or elevation. Those are the only expected skips; any other skip means the runtime was not acquired. They all report `Symbolic links are unavailable in this test environment`, and they are:
+
+- `Discover_disables_package_containing_reparse_point`, which proves a package tree still refuses one.
+- `AutomationDependencyResolverTests`' four link cases, which prove an external tool reached through a winget or scoop shim resolves to its target.
+- `Re_applying_the_same_executable_through_a_shim_does_not_ask_for_trust_again`, which proves re-pointing a configured tool at the same executable through a shim does not re-prompt for trust.
+
+The last two groups cover the only supported route to a shimmed FFmpeg, so a release whose run skipped them has not tested it. Enable Developer Mode on the release machine, or run the suite elevated.
 
 ## Publish with GitHub CLI
 
@@ -109,7 +115,7 @@ Two of those the tracer only covers synthetically, so they still need a real che
 | Check | Expected |
 | --- | --- |
 | Browse to a real `\\server\share`, select a file, run **Report selection** | The run reports the item and counts it as being on a UNC path |
-| Add a package declaring an `externalTools` entry that is not installed | The package shows as *Missing dependency* with the tool's display name in its diagnostic, and its actions do not run |
+| Add a package declaring an `externalTools` entry that is not installed | The package shows as *Needs configuration*. Open Configure, confirm the program is named on the Programs page, and confirm its actions do not run until a valid executable is saved |
 
 What the tracer cannot reach at all is the Tools tab itself. Check these by hand on the installed build:
 
@@ -149,6 +155,6 @@ Updating requires a real Velopack installation. A copied or unzipped build repor
 
 ## V1 limitations
 
-The unpackaged V1 deliberately omits package-identity features such as MSIX startup tasks, Jump Lists, packaged protocol/file associations, packaged COM activation, background tasks, and "set as default file manager" integration. Automation Actions are also deferred.
+The unpackaged V1 deliberately omits package-identity features such as MSIX startup tasks, Jump Lists, packaged protocol/file associations, packaged COM activation, background tasks, and "set as default file manager" integration.
 
 Keep the unpackaged compatibility code behind the small environment and update-service seams. This limits conflicts when merging future Files upstream content, features, and fixes.

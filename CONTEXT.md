@@ -36,6 +36,18 @@ The third Info Pane tab, after Details and Preview. It lists discovered Automati
 **Selection Policy**
 What an Automation Action declares it accepts: how many items, of which kinds, with which extensions. One evaluator in `VxFiles.Automation.Abstractions` answers it for both the Tools tab's Run button and the session's own admission check, so a button is never enabled for a run the session would refuse.
 
+**Action Setting**
+A typed value an Automation Action declares in its manifest and a user configures per action, transported to the run alongside the selection. What it *is* and how it is *held* are separate: an enum, a file path and a folder path are all held as text, so a surface choosing between a dropdown, a picker and a text box needs the declared type rather than the stored kind. An action that has never been configured has the manifest's default, and a stored value that no longer satisfies its declaration refuses the run rather than being quietly replaced.
+
+**External Tool**
+A program an Automation Package declares it needs and the user points at, installed and updated by whoever installed it rather than by VxFiles. It is identified by the SHA-256 of what its path leads to and by nothing else, so the same executable named another way is the same tool, and a different build is a different one. The path is stored as the user spelled it and followed on every run, because the shims winget and scoop install are re-pointed by their own upgrades. A path known to be unusable is refused rather than stored: having no tool configured is a state the app can ask about, whereas a stored bad path reads as configured and broken.
+
+**Readiness**
+Whether an Automation Action can be run right now, decided per action from the External Tools that action names rather than per package, so configuring one tool of two leaves every action needing only the first perfectly runnable. Needing configuration is not a fault: it is the state every package declaring an External Tool is in on a clean install, and it is reported apart from a dependency that failed once a run had started. It is composed from what is stored each time the catalog is projected and never recorded, because a verdict written onto a snapshot is erased by the next catalog refresh. It costs a state lookup and a path check and nothing more — the SHA-256 and the declared version floor are the run's business alone, so an action reported ready can still be refused when it starts.
+
+**Configure Dialog**
+The one surface an Automation Package is configured from, opened from its root row in the Tools Tab and scoped to that package. It shows the user *Programs* for its External Tools, because the people pointing at FFmpeg are not reading this glossary; in code, in issues, and in tests the term stays External Tool. Its pages are views rather than save units — the whole dialog is applied in one call, so a partial save cannot exist and Cancel needs no rollback — and it opens entirely from the published snapshot, without reading anything.
+
 **Package Trust**
 Consent granted to a whole Automation Package, recorded against a fingerprint of its content, its runner, and the external tools it resolves. It is requested before the package's first run and again whenever that fingerprint moves, and it covers every action the package contains rather than the one that triggered the prompt.
 

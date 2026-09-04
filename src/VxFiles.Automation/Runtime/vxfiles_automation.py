@@ -2,11 +2,19 @@
 # Licensed under the MIT License.
 
 import ctypes
+import json
 import os
 
 
 _SYNCHRONIZE = 0x00100000
 _WAIT_OBJECT_0 = 0
+
+
+def load_request() -> dict:
+    """Loads this run's immutable request, including settings and external tools."""
+    request_path = os.environ["VXFILES_AUTOMATION_REQUEST"]
+    with open(request_path, encoding="utf-8") as request_file:
+        return json.load(request_file)
 
 
 def cancellation_requested() -> bool:

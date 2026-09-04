@@ -46,7 +46,7 @@ internal static class AutomationPythonRunner
 		CancellationToken cancellationToken,
 		CancellationToken shutdownCancellationToken)
 	{
-		VerifyPinnedPython(options);
+		await VerifyPinnedPythonAsync(options);
 		var runTemporaryPath = Path.Join(options.TemporaryRoot, runId.Value.ToString("N"));
 		var actionDataPath = Path.Join(
 			options.StateRoot,
@@ -55,24 +55,36 @@ internal static class AutomationPythonRunner
 			action.Id.LocalId.Value);
 		Directory.CreateDirectory(runTemporaryPath);
 		Directory.CreateDirectory(actionDataPath);
-		var cancellationEventName = $"Local\\VxFiles.Automation.{runId.Value:N}";
-		var startEventName = $"Local\\VxFiles.Automation.Start.{runId.Value:N}";
-		using var cancellationEvent = new EventWaitHandle(false, EventResetMode.ManualReset, cancellationEventName);
-		using var startEvent = new EventWaitHandle(false, EventResetMode.ManualReset, startEventName);
-
-		var startInfo = CreateStartInfo(
-			options,
-			package,
-			action,
-			invocation,
-			runId,
-			runTemporaryPath,
-			actionDataPath,
-			cancellationEventName,
-			startEventName);
-		using var process = new Process { StartInfo = startInfo };
 		try
 		{
+			var requestPath = Path.Join(runTemporaryPath, "request.json");
+			await WriteRequestFileAsync(
+				requestPath,
+				options,
+				package,
+				action,
+				invocation,
+				runId,
+				trustFingerprint,
+				dependencies,
+				cancellationToken);
+			var cancellationEventName = $"Local\\VxFiles.Automation.{runId.Value:N}";
+			var startEventName = $"Local\\VxFiles.Automation.Start.{runId.Value:N}";
+			using var cancellationEvent = new EventWaitHandle(false, EventResetMode.ManualReset, cancellationEventName);
+			using var startEvent = new EventWaitHandle(false, EventResetMode.ManualReset, startEventName);
+
+			var startInfo = CreateStartInfo(
+				options,
+				package,
+				action,
+				invocation,
+				runId,
+				runTemporaryPath,
+				actionDataPath,
+				requestPath,
+				cancellationEventName,
+				startEventName);
+			using var process = new Process { StartInfo = startInfo };
 			if (!process.Start())
 				return AutomationProcessResult.Failed("The bundled Python process could not be started.");
 
@@ -92,13 +104,8 @@ internal static class AutomationPythonRunner
 				// The action waits on this gate, so no action code runs before its process tree is job-owned.
 				startEvent.Set();
 				return await RunAssignedProcessAsync(
-					options,
-					package,
 					action,
-					invocation,
-					runId,
-					trustFingerprint,
-					dependencies,
+					requestPath,
 					observe,
 					process,
 					cancellationEvent,
@@ -113,13 +120,8 @@ internal static class AutomationPythonRunner
 	}
 
 	private static async Task<AutomationProcessResult> RunAssignedProcessAsync(
-		AutomationModuleOptions options,
-		AutomationPackageDefinition package,
 		AutomationActionDefinition action,
-		AutomationInvocation invocation,
-		AutomationRunId runId,
-		string trustFingerprint,
-		ResolvedAutomationDependencies dependencies,
+		string requestPath,
 		Action<AutomationOutputFrame> observe,
 		Process process,
 		EventWaitHandle cancellationEvent,
@@ -129,7 +131,7 @@ internal static class AutomationPythonRunner
 		using var requestCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, shutdownCancellationToken);
 		try
 		{
-			await WriteRequestAsync(process, options, package, action, invocation, runId, trustFingerprint, dependencies, requestCancellation.Token);
+			await WriteRequestAsync(process, action, requestPath, requestCancellation.Token);
 		}
 		catch (OperationCanceledException) when (shutdownCancellationToken.IsCancellationRequested)
 		{
@@ -267,6 +269,7 @@ internal static class AutomationPythonRunner
 		AutomationRunId runId,
 		string temporaryPath,
 		string actionDataPath,
+		string requestPath,
 		string cancellationEventName,
 		string startEventName)
 	{
@@ -319,6 +322,7 @@ internal static class AutomationPythonRunner
 		startInfo.Environment["VXFILES_AUTOMATION_RUN_ID"] = runId.Value.ToString("D");
 		startInfo.Environment["VXFILES_AUTOMATION_TEMP"] = temporaryPath;
 		startInfo.Environment["VXFILES_AUTOMATION_DATA"] = actionDataPath;
+		startInfo.Environment["VXFILES_AUTOMATION_REQUEST"] = requestPath;
 		startInfo.Environment["VXFILES_AUTOMATION_CANCEL_EVENT"] = cancellationEventName;
 		startInfo.Environment["VXFILES_AUTOMATION_START_EVENT"] = startEventName;
 		return startInfo;
@@ -354,8 +358,8 @@ internal static class AutomationPythonRunner
 		return result.Append('\\', backslashes * 2).Append('"').ToString();
 	}
 
-	private static async Task WriteRequestAsync(
-		Process process,
+	private static async Task WriteRequestFileAsync(
+		string requestPath,
 		AutomationModuleOptions options,
 		AutomationPackageDefinition package,
 		AutomationActionDefinition action,
@@ -365,89 +369,90 @@ internal static class AutomationPythonRunner
 		ResolvedAutomationDependencies dependencies,
 		CancellationToken cancellationToken)
 	{
-		if (action.InputMode is AutomationInputMode.JsonStdin)
+		await using var stream = new FileStream(
+			requestPath,
+			FileMode.CreateNew,
+			FileAccess.Write,
+			FileShare.None,
+			4096,
+			FileOptions.Asynchronous);
+		using (var writer = new Utf8JsonWriter(stream))
 		{
-			using var stream = new MemoryStream();
-			using (var writer = new Utf8JsonWriter(stream))
+			writer.WriteStartObject();
+			writer.WriteNumber("protocolVersion", 1);
+			writer.WriteString("runId", runId.Value);
+			writer.WriteStartObject("action");
+			writer.WriteString("id", action.Id.Value);
+			writer.WriteString("packageId", package.Id.Value);
+			writer.WriteString("packageVersion", package.PackageVersion);
+			writer.WriteString("trustFingerprint", trustFingerprint);
+			writer.WriteEndObject();
+			writer.WriteStartObject("host");
+			writer.WriteString("version", options.HostVersion.ToString(3));
+			writer.WriteString("locale", options.HostLocale);
+			writer.WriteEndObject();
+			writer.WriteString("capturedAtUtc", invocation.Selection.CapturedAtUtc);
+			writer.WriteString("activeFolderPath", invocation.Selection.ActiveFolderPath);
+			writer.WriteStartArray("items");
+			foreach (var item in invocation.Selection.Items)
 			{
 				writer.WriteStartObject();
-				writer.WriteNumber("protocolVersion", 1);
-				writer.WriteString("runId", runId.Value);
-				writer.WriteStartObject("action");
-				writer.WriteString("id", action.Id.Value);
-				writer.WriteString("packageId", package.Id.Value);
-				writer.WriteString("packageVersion", package.PackageVersion);
-				writer.WriteString("trustFingerprint", trustFingerprint);
-				writer.WriteEndObject();
-				writer.WriteStartObject("host");
-				writer.WriteString("version", options.HostVersion.ToString(3));
-				writer.WriteString("locale", options.HostLocale);
-				writer.WriteEndObject();
-				writer.WriteString("capturedAtUtc", invocation.Selection.CapturedAtUtc);
-				writer.WriteString("activeFolderPath", invocation.Selection.ActiveFolderPath);
-				writer.WriteStartArray("items");
-				foreach (var item in invocation.Selection.Items)
-				{
-					writer.WriteStartObject();
-					writer.WriteString("path", item.FullPath);
-					writer.WriteString("kind", item.Kind is SelectedPathKind.File ? "file" : "folder");
-					writer.WriteString("locationKind", item.LocationKind is SelectedLocationKind.Local ? "local" : "unc");
-					writer.WriteEndObject();
-				}
-
-				writer.WriteEndArray();
-				writer.WriteStartObject("settings");
-				foreach (var (key, value) in dependencies.Settings.OrderBy(item => item.Key, StringComparer.Ordinal))
-				{
-					writer.WritePropertyName(key);
-					WriteSettingValue(writer, value);
-				}
-
-				writer.WriteEndObject();
-				writer.WriteStartArray("externalTools");
-				foreach (var tool in dependencies.ExternalTools)
-				{
-					writer.WriteStartObject();
-					writer.WriteString("id", tool.Id);
-					writer.WriteString("path", tool.ExecutablePath);
-					writer.WriteString("fingerprint", tool.Fingerprint);
-					if (tool.FileVersion is not null)
-						writer.WriteString("fileVersion", tool.FileVersion);
-					writer.WriteString("signatureStatus", tool.SignatureStatus);
-					writer.WriteEndObject();
-				}
-
-				writer.WriteEndArray();
+				writer.WriteString("path", item.FullPath);
+				writer.WriteString("kind", item.Kind is SelectedPathKind.File ? "file" : "folder");
+				writer.WriteString("locationKind", item.LocationKind is SelectedLocationKind.Local ? "local" : "unc");
 				writer.WriteEndObject();
 			}
 
-			stream.Position = 0;
+			writer.WriteEndArray();
+			writer.WriteStartObject("settings");
+			foreach (var (key, value) in dependencies.Settings.OrderBy(item => item.Key, StringComparer.Ordinal))
+			{
+				writer.WritePropertyName(key);
+				AutomationSettingValueJson.Write(writer, value);
+			}
+
+			writer.WriteEndObject();
+			writer.WriteStartArray("externalTools");
+			foreach (var tool in dependencies.ExternalTools)
+			{
+				writer.WriteStartObject();
+				writer.WriteString("id", tool.Id);
+				writer.WriteString("path", tool.ExecutablePath);
+				writer.WriteString("fingerprint", tool.Fingerprint);
+				if (tool.FileVersion is not null)
+					writer.WriteString("fileVersion", tool.FileVersion);
+				writer.WriteEndObject();
+			}
+
+			writer.WriteEndArray();
+			writer.WriteEndObject();
+			await writer.FlushAsync(cancellationToken);
+		}
+
+		await stream.FlushAsync(cancellationToken);
+	}
+
+	private static async Task WriteRequestAsync(
+		Process process,
+		AutomationActionDefinition action,
+		string requestPath,
+		CancellationToken cancellationToken)
+	{
+		if (action.InputMode is AutomationInputMode.JsonStdin)
+		{
+			await using var stream = new FileStream(
+				requestPath,
+				FileMode.Open,
+				FileAccess.Read,
+				FileShare.Read,
+				4096,
+				FileOptions.Asynchronous | FileOptions.SequentialScan);
 			await stream.CopyToAsync(process.StandardInput.BaseStream, cancellationToken);
 		}
 
 		process.StandardInput.Close();
 	}
 
-	private static void WriteSettingValue(Utf8JsonWriter writer, AutomationSettingValue value)
-	{
-		switch (value.Kind)
-		{
-			case AutomationSettingValueKind.Boolean:
-				writer.WriteBooleanValue(value.BooleanValue);
-				break;
-			case AutomationSettingValueKind.Integer:
-				writer.WriteNumberValue(value.IntegerValue);
-				break;
-			case AutomationSettingValueKind.Number:
-				writer.WriteNumberValue(value.NumberValue);
-				break;
-			case AutomationSettingValueKind.String:
-				writer.WriteStringValue(value.StringValue);
-				break;
-			default:
-				throw new InvalidOperationException("Unknown Automation setting value kind.");
-		}
-	}
 
 	private static async Task<OutputDrainResult> DrainStandardOutputAsync(
 		Process process,
@@ -512,13 +517,13 @@ internal static class AutomationPythonRunner
 		intents.AddRange(frame.Intents);
 	}
 
-	private static void VerifyPinnedPython(AutomationModuleOptions options)
+	private static async ValueTask VerifyPinnedPythonAsync(AutomationModuleOptions options)
 	{
 		var pinnedSha256 = options.Runtime.PythonSha256;
 		var expected = pinnedSha256.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase)
 			? pinnedSha256[7..]
 			: pinnedSha256;
-		var actual = Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(options.Runtime.PythonExecutablePath)));
+		var actual = await AutomationFileHash.ComputeHexAsync(options.Runtime.PythonExecutablePath);
 		if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
 			throw new InvalidOperationException("The app-local Python executable does not match its pinned SHA-256.");
 	}

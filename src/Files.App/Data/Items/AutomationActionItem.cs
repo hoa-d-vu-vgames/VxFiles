@@ -26,7 +26,13 @@ namespace Files.App.Data.Items
 
 			Snapshot = snapshot;
 			_run = run;
-			Diagnostics = string.Join(Environment.NewLine, snapshot.Diagnostics);
+			Diagnostics = snapshot.Availability is AutomationAvailability.NeedsConfiguration
+				? string.Join(
+					Environment.NewLine,
+					snapshot.Diagnostics.Select(program => string.Format(
+						Strings.AutomationToolsProgramNeedsConfiguration.GetLocalizedResource(),
+						program)))
+				: string.Join(Environment.NewLine, snapshot.Diagnostics);
 		}
 
 		/// <summary>
@@ -72,6 +78,7 @@ namespace Files.App.Data.Items
 			AutomationActionRunState.NoFolder => Strings.AutomationToolsRunNoFolder.GetLocalizedResource(),
 			AutomationActionRunState.IncompatibleSelection => Strings.AutomationToolsRunIncompatibleSelection.GetLocalizedResource(),
 			AutomationActionRunState.Busy => Strings.AutomationToolsRunBusy.GetLocalizedResource(),
+			AutomationActionRunState.NeedsConfiguration => Strings.AutomationToolsRunNeedsConfiguration.GetLocalizedResource(),
 			_ => Strings.AutomationToolsRunUnavailable.GetLocalizedResource(),
 		};
 
